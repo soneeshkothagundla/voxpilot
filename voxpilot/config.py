@@ -47,6 +47,10 @@ class AgentConfig:
     tool_version: str = "computer_20251124"
     beta_flag: str = "computer-use-2025-11-24"
     enable_zoom: bool = False
+    # How long (seconds) the cursor takes to glide to each target. Larger = more
+    # visible/followable; the model's thinking time dominates total latency, so a
+    # visible glide costs little. Set 0 to teleport instantly.
+    cursor_move_duration: float = 0.45
 
 
 @dataclass

@@ -285,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     capture = ScreenCapture(cfg.agent.target_width, cfg.agent.target_height)
     guard = SafetyGuard(cfg.safety, cfg.log_dir, feedback=feedback)
     client = ComputerUseClient(cfg, use_opus=args.opus)
-    executor = ActionExecutor(capture, guard)
+    executor = ActionExecutor(capture, guard, move_duration=cfg.agent.cursor_move_duration)
     loop = AgentLoop(client, capture, executor, guard, feedback, cfg)
 
     # ------------------------------------------------------------------ #
