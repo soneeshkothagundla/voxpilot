@@ -226,8 +226,10 @@ python -m voxpilot --windowed
 pythonw -m voxpilot --windowed
 ```
 
-While you hold **F9**, a rounded overlay pill appears near the bottom of the
-screen with a live **waveform** that reacts to your voice; release to send and it
+While you hold **F9**, a **Liquid-Glass** pill appears near the bottom of the
+screen — a frosted capsule that blurs the desktop behind it (real backdrop blur),
+with a glossy specular rim and a live **waveform** that reacts to your voice;
+release to send and it
 switches to a **"Working"** animation while it transcribes, thinks, and acts. The
 overlay is excluded from screen capture (`WDA_EXCLUDEFROMCAPTURE`), so the agent
 never sees it in its own screenshots. The tray icon also reflects state

@@ -28,7 +28,7 @@ CENTER_Y = 56
 _BASE = (249, 250, 253)
 _TOP = (255, 255, 255)
 _BOTTOM = (234, 238, 246)
-_BODY_ALPHA = 208  # < 255 => the desktop shows through faintly (translucent)
+_BODY_ALPHA = 140  # low => the (blurred) desktop behind shows through: real glass
 _INDIGO = (79, 70, 229)
 _VIOLET = (139, 92, 246)
 _CYAN = (6, 182, 212)
@@ -97,6 +97,8 @@ class AuroraRenderer:
         self._body_box = tuple(round(v * self.f) for v in BODY)
         self._font = _load_font(round(14 * self.f))
         self._body_mask = self._make_body_mask()
+        #: Target-size body mask, used to clip the live backdrop blur to the pill.
+        self.body_mask_target = self._body_mask.resize((self.tw, self.th), Image.BOX)
         self._chrome = self._build_chrome()
         self._halo_sil = self._build_halo_silhouette()
         self._labels = {
@@ -156,26 +158,42 @@ class AuroraRenderer:
         body.paste(grad, (x0, y0), self._body_mask.crop((x0, y0, x1, y1)))
         img = Image.alpha_composite(img, body)
 
-        # Strokes: outer dark definition + inner glass hairline + top sheen.
+        # Strokes: subtle outer definition + a bright inner glass rim.
         draw = ImageDraw.Draw(img)
         r = round(RADIUS * self.f)
         draw.rounded_rectangle(
             [x0 - self._s(1), y0 - self._s(1), x1 + self._s(1), y1 + self._s(1)],
             radius=r,
-            outline=(15, 23, 42, 38),
+            outline=(15, 23, 42, 40),
             width=max(1, round(self._s(1))),
         )
         draw.rounded_rectangle(
             [x0, y0, x1, y1],
             radius=r,
-            outline=(255, 255, 255, 190),
-            width=max(1, round(self._s(1))),
+            outline=(255, 255, 255, 225),
+            width=max(1, round(self._s(1.4))),
         )
-        draw.line(
-            [x0 + self._s(44), y0 + self._s(2), x1 - self._s(44), y0 + self._s(2)],
-            fill=(255, 255, 255, 150),
-            width=max(1, round(self._s(1))),
+
+        # Liquid-glass specular: a glossy top sheen band + a soft diagonal glint.
+        sheen = Image.new("RGBA", (self.iw, self.ih), (0, 0, 0, 0))
+        band_h = max(1, int(bh * 0.55))
+        col = Image.new("RGBA", (1, band_h))
+        cpx = col.load()
+        for y in range(band_h):
+            cpx[0, y] = (255, 255, 255, round(80 * (1 - y / band_h) ** 1.4))
+        col = col.resize((bw, band_h))
+        sheen.paste(col, (x0, y0), self._body_mask.crop((x0, y0, x1, y0 + band_h)))
+        glint = Image.new("RGBA", (self.iw, self.ih), (0, 0, 0, 0))
+        gx0 = x0 + round(self._s(26))
+        gy0 = y0 + round(self._s(5))
+        ImageDraw.Draw(glint).ellipse(
+            [gx0, gy0, gx0 + round(self._s(130)), gy0 + round(self._s(22))],
+            fill=(255, 255, 255, 70),
         )
+        glint = glint.filter(ImageFilter.GaussianBlur(self._s(7)))
+        transparent = Image.new("RGBA", (self.iw, self.ih), (0, 0, 0, 0))
+        sheen = Image.alpha_composite(sheen, Image.composite(glint, transparent, self._body_mask))
+        img = Image.alpha_composite(img, sheen)
         return img
 
     def _build_halo_silhouette(self) -> Image.Image:

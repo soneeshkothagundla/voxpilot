@@ -122,6 +122,8 @@ class _WinOverlay:
         self._renderer = None
         self._x = self._y = 0
         self._wndproc_ref = None
+        self._backdrop = None  # blurred desktop behind the pill (liquid glass)
+        self._bd_counter = 0
 
     # -- public, thread-safe API ------------------------------------------- #
     def show_listening(self) -> None:
@@ -310,6 +312,29 @@ class _WinOverlay:
         self._g.SelectObject(self._memdc, self._hbitmap)
         self._dib_size = w * h * 4
 
+    def _grab_backdrop(self) -> None:
+        """Capture + blur the desktop behind the pill for a real frosted-glass look.
+
+        The overlay window is excluded from screen capture, so this never picks up
+        the overlay itself (no feedback loop). Refreshed occasionally, not per frame.
+        """
+        try:
+            import mss
+            from PIL import Image, ImageFilter
+
+            w, h = self._renderer.tw, self._renderer.th
+            region = {"left": int(self._x), "top": int(self._y), "width": int(w), "height": int(h)}
+            with mss.mss() as sct:
+                shot = sct.grab(region)
+            bg = Image.frombytes("RGB", (shot.width, shot.height), shot.bgra, "raw", "BGRX")
+            if bg.size != (w, h):
+                bg = bg.resize((w, h))
+            bg = bg.filter(ImageFilter.GaussianBlur(14)).convert("RGBA")
+            bg.putalpha(self._renderer.body_mask_target)
+            self._backdrop = bg
+        except Exception:
+            self._backdrop = None
+
     # -- loop -------------------------------------------------------------- #
     def _loop(self) -> None:
         msg = wintypes.MSG()
@@ -323,6 +348,9 @@ class _WinOverlay:
             if self._visible and (now - last) >= _FRAME_DT:
                 k = 0.55 if self._target > self._level else 0.18
                 self._level += k * (self._target - self._level)
+                self._bd_counter += 1
+                if self._bd_counter % 15 == 0:  # refresh the frosted backdrop ~2x/sec
+                    self._grab_backdrop()
                 self._render(now - self._t0)
                 last = now
             time.sleep(0.004)
@@ -338,6 +366,7 @@ class _WinOverlay:
                 elif kind in ("listen", "work"):
                     self._mode = "listening" if kind == "listen" else "working"
                     if not self._visible:
+                        self._grab_backdrop()
                         self._u.ShowWindow(self._hwnd, 4)  # SW_SHOWNOACTIVATE
                         self._visible = True
                 elif kind == "hide":
@@ -351,7 +380,12 @@ class _WinOverlay:
             pass
 
     def _render(self, t: float) -> None:
-        img = self._renderer.frame(self._mode, self._level, t)
+        frame = self._renderer.frame(self._mode, self._level, t)
+        if self._backdrop is not None:
+            img = self._backdrop.copy()
+            img.alpha_composite(frame)
+        else:
+            img = frame
         buf = _premultiplied_bgra(img)
         ctypes.memmove(self._bits, buf, min(len(buf), self._dib_size))
         w, h = self._renderer.tw, self._renderer.th
