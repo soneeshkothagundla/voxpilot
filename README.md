@@ -38,7 +38,7 @@ tool on **AWS Bedrock**, executes the mouse/keyboard actions Claude returns on y
 ## What it looks like in use
 
 1. VoxPilot starts and sits **idle**, printing `Hold <ptt_key> to talk. Ctrl+C to quit.`
-2. You **hold the push-to-talk key** (default: **Left Ctrl**) and say,
+2. You **hold the push-to-talk key** (default: **F9**) and say,
    e.g. *"Open the Downloads folder and sort by date."*
 3. You **release** the key. VoxPilot transcribes locally, screenshots, and starts
    the agent loop:
@@ -173,7 +173,7 @@ cp config.example.yaml config.yaml
 | `stt` | `language` | `null` | Force a language code (e.g. `en`) or autodetect. |
 | `stt` | `openai.model` | `whisper-1` | Model used by the OpenAI backend. |
 | `hotkey` | `mode` | `push_to_talk` | `push_to_talk` (hold) or `toggle` (tap on/off). |
-| `hotkey` | `ptt_key` | `ctrl_l` | Push-to-talk key (pynput name, e.g. `ctrl_l`, `ctrl_r`, `f9`, `cmd_r`). |
+| `hotkey` | `ptt_key` | `f9` | Push-to-talk key (pynput name, e.g. `f9`, `ctrl_l`, `ctrl_r`, `cmd_r`). |
 | `hotkey` | `kill_key` | `esc` | Kill-switch key. |
 | `hotkey` | `kill_press_count` | `3` | Presses required to abort. |
 | `hotkey` | `kill_press_window_s` | `1.0` | Time window (seconds) for the presses. |
@@ -234,7 +234,7 @@ If you installed the console script, `voxpilot` works the same as `python -m vox
 
 | Control | Default | What it does |
 |---|---|---|
-| **Push-to-talk** | **Hold Left Ctrl** (`ctrl_l`) | Hold to record; release to transcribe and act. In `toggle` mode, tap to start, tap to stop. |
+| **Push-to-talk** | **Hold F9** (`f9`) | Hold to record; release to transcribe and act. In `toggle` mode, tap to start, tap to stop. |
 | **Kill switch** | **Triple-press Esc** within ~1s | Aborts the running task immediately. |
 | **Fail-safe corner** | **Mouse → any screen corner** | Raises pyautogui's `FailSafeException` and stops everything. |
 | **Quit** | **Ctrl+C** in the terminal | Stops VoxPilot and cleans up listeners/threads. |
