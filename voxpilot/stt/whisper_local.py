@@ -101,8 +101,9 @@ class FasterWhisperSTT(STTBackend):
         assert self._model is not None
         segments, _info = self._model.transcribe(
             audio,
-            beam_size=5,
+            beam_size=1,
             language=self.language,
             vad_filter=True,
+            condition_on_previous_text=False,
         )
         return "".join(segment.text for segment in segments).strip()

@@ -33,7 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only, avoids circular import
 # Enable the fail-safe (corner-slam abort) and a small inter-call pause so the
 # host UI has time to react between synthesized events.
 pyautogui.FAILSAFE = True
-pyautogui.PAUSE = 0.05
+pyautogui.PAUSE = 0.0
 
 #: Maps xdotool/Claude key tokens to the names pyautogui expects.
 XDOTOOL_TO_PYAUTOGUI: dict[str, str] = {
@@ -134,7 +134,7 @@ class ActionExecutor:
         *,
         type_interval: float = 0.012,
         type_chunk: int = 50,
-        move_duration: float = 0.4,
+        move_duration: float = 0.18,
     ) -> None:
         """Store collaborators and typing parameters."""
         self.capture = capture

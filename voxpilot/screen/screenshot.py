@@ -96,11 +96,13 @@ class ScreenCapture:
         if (scale.scaled_width, scale.scaled_height) != image.size:
             image = image.resize(
                 (scale.scaled_width, scale.scaled_height),
-                Image.LANCZOS,
+                Image.BILINEAR,
             )
 
         buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
+        # compress_level=1 trades a slightly larger PNG for much faster encoding,
+        # which keeps each agent step snappy.
+        image.save(buffer, format="PNG", compress_level=1)
         return buffer.getvalue(), scale
 
     def capture_base64(self) -> tuple[str, ScaleResult]:

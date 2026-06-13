@@ -226,8 +226,11 @@ python -m voxpilot --windowed
 pythonw -m voxpilot --windowed
 ```
 
-While you hold **F9**, a small overlay appears near the bottom of the screen with
-a live mic-level bar; release to send. The tray icon reflects state
+While you hold **F9**, a rounded overlay pill appears near the bottom of the
+screen with a live **waveform** that reacts to your voice; release to send and it
+switches to a **"Working"** animation while it transcribes, thinks, and acts. The
+overlay is excluded from screen capture (`WDA_EXCLUDEFROMCAPTURE`), so the agent
+never sees it in its own screenshots. The tray icon also reflects state
 (idle / listening / thinking / acting). **Quit** from the tray menu or with
 **Ctrl+Alt+Q**. In this mode output is written to `~/.voxpilot/logs/voxpilot.log`.
 

@@ -384,7 +384,17 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) ->
 
     overlay = Overlay()
     tray = TrayIcon(on_quit=overlay.stop)
-    feedback.status_sink = lambda state: tray.set_state(state.lower())
+
+    def on_status(state: str) -> None:
+        """Mirror agent status onto the tray icon and the on-screen overlay."""
+        s = state.lower()
+        tray.set_state(s)
+        if s in ("thinking", "acting"):
+            overlay.show_working()
+        elif s in ("idle", "done"):
+            overlay.hide()
+
+    feedback.status_sink = on_status
 
     stt = create_stt(cfg.stt, cfg.secrets)
 
@@ -415,7 +425,7 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) ->
         show_meter=False,
         on_listen_start=overlay.show_listening,
         on_level=overlay.update_level,
-        on_listen_stop=overlay.hide,
+        on_listen_stop=overlay.show_working,
     )
 
     def warm_up() -> None:
