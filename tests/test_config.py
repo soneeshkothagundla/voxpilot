@@ -44,7 +44,7 @@ def test_load_no_file_returns_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert cfg.agent.provider == "bedrock"
     assert cfg.agent.model == "us.anthropic.claude-sonnet-4-6"
     assert cfg.stt.backend == "faster_whisper"
-    assert cfg.hotkey.ptt_key == "ctrl_r"
+    assert cfg.hotkey.ptt_key == "ctrl_l"
     assert cfg.safety.dry_run is False
 
 

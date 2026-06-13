@@ -61,8 +61,8 @@ hotkey:
   # "toggle": tap once to start recording, tap again to stop.
   mode: push_to_talk
 
-  # Push-to-talk key (pynput name). Examples: ctrl_r, ctrl_l, alt_r, f9, cmd_r.
-  ptt_key: ctrl_r
+  # Push-to-talk key (pynput name). Examples: ctrl_l, ctrl_r, alt_r, f9, cmd_r.
+  ptt_key: ctrl_l
 
   # Kill switch: press this key N times quickly to abort the running task.
   kill_key: esc

@@ -66,7 +66,7 @@ class HotkeyConfig:
     """Push-to-talk and kill-switch hotkey settings."""
 
     mode: str = "push_to_talk"
-    ptt_key: str = "ctrl_r"
+    ptt_key: str = "ctrl_l"
     kill_key: str = "esc"
     kill_press_count: int = 3
     kill_press_window_s: float = 1.0

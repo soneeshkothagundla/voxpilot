@@ -76,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable text-to-speech feedback.",
     )
     parser.add_argument(
+        "--no-confirm",
+        action="store_true",
+        help="Disable the confirmation prompt before destructive actions (use with care).",
+    )
+    parser.add_argument(
         "--once",
         metavar="TEXT",
         default=None,
@@ -169,6 +174,8 @@ def _apply_overrides(cfg: Config, args: argparse.Namespace) -> None:
         cfg.agent.model = args.model
     if args.no_tts:
         cfg.feedback.tts = False
+    if args.no_confirm:
+        cfg.safety.confirm_destructive = False
     if args.max_iter is not None:
         cfg.agent.max_iterations = args.max_iter
     if args.quiet:
