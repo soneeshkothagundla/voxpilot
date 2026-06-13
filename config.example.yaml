@@ -37,7 +37,7 @@ agent:
   # Seconds for the cursor to glide to each target (0 = instant). A visible glide
   # lets you follow what the agent is doing; total latency is dominated by the
   # model's thinking time, so this costs very little.
-  cursor_move_duration: 0.45
+  cursor_move_duration: 0.12
 
 stt:
   # Speech-to-text backend: "faster_whisper" (local, offline, default) or

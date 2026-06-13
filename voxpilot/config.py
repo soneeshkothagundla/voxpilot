@@ -50,7 +50,7 @@ class AgentConfig:
     # How long (seconds) the cursor takes to glide to each target. Larger = more
     # visible/followable; the model's thinking time dominates total latency, so a
     # visible glide costs little. Set 0 to teleport instantly.
-    cursor_move_duration: float = 0.45
+    cursor_move_duration: float = 0.12
 
 
 @dataclass

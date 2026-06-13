@@ -132,7 +132,7 @@ class ActionExecutor:
         capture: ScreenCapture,
         guard: SafetyGuard,
         *,
-        type_interval: float = 0.012,
+        type_interval: float = 0.0,
         type_chunk: int = 50,
         move_duration: float = 0.18,
     ) -> None:

@@ -1,269 +1,389 @@
-"""On-screen status overlay (a Wispr-Flow-style pill) built with tkinter.
+"""The VoxPilot status overlay.
 
-A small, rounded, always-on-top window sits near the bottom-center of the primary
-display. It has two looks:
+On Windows this renders the "Aurora Glass Capsule" (see :mod:`voxpilot.ui._aurora`)
+into a true per-pixel-alpha **layered window** via ``UpdateLayeredWindow`` — giving
+antialiased rounded corners, a soft drop shadow, translucency, and a glow that a
+chroma-key window can't match. The window is click-through and marked
+``WDA_EXCLUDEFROMCAPTURE`` so the agent never sees it in its screenshots.
 
-* **Listening** - a red record dot and a live waveform that reacts to the mic
-  level while the user holds the push-to-talk key.
-* **Working** - a spinner and a traveling-wave animation shown while VoxPilot
-  transcribes, thinks, and acts.
+On non-Windows (or if the layered window can't be created) it falls back to the
+tkinter overlay in :mod:`voxpilot.ui.overlay_tk`.
 
-On Windows the overlay window is marked ``WDA_EXCLUDEFROMCAPTURE`` so it is
-invisible to screen-capture APIs (including ``mss``); the agent therefore never
-sees the overlay in its screenshots even while it is on screen.
-
-tkinter requires its event loop on the main thread, so :meth:`Overlay.run`
-blocks. Drive everything else from other threads; all public methods are
-thread-safe (they enqueue commands applied on the tkinter thread).
+Public API (thread-safe, identical across backends): ``run()`` (blocks on the main
+thread), ``show_listening()``, ``show_working()``, ``update_level(level)``,
+``hide()``, ``stop()``.
 """
 
 from __future__ import annotations
 
-import math
+import ctypes
 import queue
 import sys
-import tkinter as tk
+import time
+from ctypes import wintypes
 
-#: Chroma key painted behind the pill; these pixels are made transparent so the
-#: pill has rounded corners. Must not appear in the visible pill artwork.
-_CHROMA = "#ff00ff"
-_PILL = "#15171c"
-_FG = "#eef1f6"
-_ACCENT = "#4c8dff"
-_ACCENT2 = "#8a6bff"
-_REC = "#ff5a52"
-_TRACK = "#2a2e37"
+from .overlay_tk import TkOverlay
+
+FPS = 30
+_FRAME_DT = 1.0 / FPS
 
 
-def _exclude_from_capture(root: tk.Tk) -> None:
-    """Mark the window so screen-capture APIs (mss) can't see it (Windows only)."""
-    if sys.platform != "win32":
-        return
+# -- module-level structs (importable on any platform; no windll touched) --- #
+class _POINT(ctypes.Structure):
+    _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+
+class _SIZE(ctypes.Structure):
+    _fields_ = [("cx", wintypes.LONG), ("cy", wintypes.LONG)]
+
+
+class _BLENDFUNCTION(ctypes.Structure):
+    _fields_ = [
+        ("BlendOp", ctypes.c_byte),
+        ("BlendFlags", ctypes.c_byte),
+        ("SourceConstantAlpha", ctypes.c_byte),
+        ("AlphaFormat", ctypes.c_byte),
+    ]
+
+
+class _BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [
+        ("biSize", wintypes.DWORD),
+        ("biWidth", wintypes.LONG),
+        ("biHeight", wintypes.LONG),
+        ("biPlanes", wintypes.WORD),
+        ("biBitCount", wintypes.WORD),
+        ("biCompression", wintypes.DWORD),
+        ("biSizeImage", wintypes.DWORD),
+        ("biXPelsPerMeter", wintypes.LONG),
+        ("biYPelsPerMeter", wintypes.LONG),
+        ("biClrUsed", wintypes.DWORD),
+        ("biClrImportant", wintypes.DWORD),
+    ]
+
+
+class _WNDCLASS(ctypes.Structure):
+    _fields_ = [
+        ("style", wintypes.UINT),
+        ("lpfnWndProc", ctypes.c_void_p),
+        ("cbClsExtra", ctypes.c_int),
+        ("cbWndExtra", ctypes.c_int),
+        ("hInstance", wintypes.HINSTANCE),
+        ("hIcon", wintypes.HICON),
+        ("hCursor", wintypes.HANDLE),
+        ("hbrBackground", wintypes.HBRUSH),
+        ("lpszMenuName", wintypes.LPCWSTR),
+        ("lpszClassName", wintypes.LPCWSTR),
+    ]
+
+
+def _system_scale() -> float:
+    """Return the primary-display DPI scale (1.0 = 96 DPI). Windows only."""
     try:
-        import ctypes
-
-        root.update_idletasks()
-        user32 = ctypes.windll.user32
-        wda_exclude = 0x00000011  # WDA_EXCLUDEFROMCAPTURE (Win10 2004+)
-        base = root.winfo_id()
-        for hwnd in (base, user32.GetParent(base)):
-            if hwnd:
-                user32.SetWindowDisplayAffinity(hwnd, wda_exclude)
+        dpi = ctypes.windll.user32.GetDpiForSystem()
+        if dpi:
+            return max(1.0, dpi / 96.0)
     except Exception:
         pass
+    return 1.0
 
 
-class Overlay:
-    """Thread-safe, always-on-top animated status pill rendered with tkinter."""
+def _premultiplied_bgra(img) -> bytes:
+    """Convert a straight-alpha RGBA Pillow image to premultiplied BGRA bytes."""
+    import numpy as np
 
-    def __init__(self, width: int = 296, height: int = 60) -> None:
-        """Create the overlay (no window is shown until :meth:`run` is called)."""
+    a = np.asarray(img, dtype=np.uint8)
+    alpha = a[:, :, 3].astype(np.uint16)
+    out = np.empty_like(a)
+    out[:, :, 0] = (a[:, :, 2].astype(np.uint16) * alpha // 255).astype(np.uint8)  # B
+    out[:, :, 1] = (a[:, :, 1].astype(np.uint16) * alpha // 255).astype(np.uint8)  # G
+    out[:, :, 2] = (a[:, :, 0].astype(np.uint16) * alpha // 255).astype(np.uint8)  # R
+    out[:, :, 3] = a[:, :, 3]
+    return out.tobytes()
+
+
+class _WinOverlay:
+    """Per-pixel-alpha layered-window overlay (Windows)."""
+
+    def __init__(self) -> None:
         self._q: queue.Queue[tuple] = queue.Queue()
-        self._root: tk.Tk | None = None
-        self._canvas: tk.Canvas | None = None
-        self._w = width
-        self._h = height
-        self._mode = "hidden"  # "hidden" | "listening" | "working"
-        self._visible = False
-        self._level = 0.0  # smoothed display level
-        self._target = 0.0  # latest requested level
-        self._frame = 0
         self._running = False
+        self._visible = False
+        self._mode = "listening"
+        self._level = 0.0
+        self._target = 0.0
+        self._t0 = 0.0
+        self._hwnd = None
+        self._memdc = None
+        self._screendc = None
+        self._hbitmap = None
+        self._bits = None
+        self._dib_size = 0
+        self._renderer = None
+        self._x = self._y = 0
+        self._wndproc_ref = None
 
-    # ------------------------------------------------------------------ #
-    # Public, thread-safe API
-    # ------------------------------------------------------------------ #
-
+    # -- public, thread-safe API ------------------------------------------- #
     def show_listening(self) -> None:
-        """Switch to the listening look and show the pill."""
         self._q.put(("listen",))
 
     def show_working(self) -> None:
-        """Switch to the working look and show the pill."""
         self._q.put(("work",))
 
     def update_level(self, level: float) -> None:
-        """Update the live mic level (0.0-1.0) for the waveform."""
         self._q.put(("level", float(level)))
 
     def hide(self) -> None:
-        """Hide the pill."""
         self._q.put(("hide",))
 
     def stop(self) -> None:
-        """Exit the tkinter event loop and let :meth:`run` return."""
         self._q.put(("stop",))
 
-    # ------------------------------------------------------------------ #
-    # Main-thread event loop
-    # ------------------------------------------------------------------ #
-
+    # -- lifecycle --------------------------------------------------------- #
     def run(self) -> None:
-        """Build the window and run the tkinter event loop (blocks the thread)."""
-        root = tk.Tk()
-        self._root = root
-        root.title("VoxPilot")
-        root.configure(bg=_CHROMA)
-        root.withdraw()
         try:
-            root.overrideredirect(True)
-            root.attributes("-topmost", True)
-            root.attributes("-alpha", 0.97)
-            root.attributes("-transparentcolor", _CHROMA)
+            self._init_window()
+        except Exception as exc:  # noqa: BLE001 - degrade without crashing the app
+            print(f"[overlay] layered window unavailable: {exc}", file=sys.stderr)
+            self._drain_only()
+            return
+        self._t0 = time.perf_counter()
+        self._running = True
+        self._loop()
+        self._cleanup()
+
+    def _drain_only(self) -> None:
+        self._running = True
+        while self._running:
+            try:
+                while True:
+                    if self._q.get_nowait()[0] == "stop":
+                        self._running = False
+            except queue.Empty:
+                pass
+            time.sleep(0.05)
+
+    # -- Win32 setup ------------------------------------------------------- #
+    def _init_window(self) -> None:
+        from ._aurora import AuroraRenderer
+
+        u = ctypes.windll.user32
+        g = ctypes.windll.gdi32
+        k = ctypes.windll.kernel32
+        self._u, self._g = u, g
+        lresult = ctypes.c_longlong
+
+        k.GetModuleHandleW.restype = wintypes.HMODULE
+        k.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+        u.DefWindowProcW.restype = lresult
+        u.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        u.RegisterClassW.argtypes = [ctypes.POINTER(_WNDCLASS)]
+        u.RegisterClassW.restype = wintypes.ATOM
+        u.CreateWindowExW.restype = wintypes.HWND
+        u.CreateWindowExW.argtypes = [
+            wintypes.DWORD,
+            wintypes.LPCWSTR,
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            wintypes.HWND,
+            wintypes.HMENU,
+            wintypes.HINSTANCE,
+            wintypes.LPVOID,
+        ]
+        u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        u.DestroyWindow.argtypes = [wintypes.HWND]
+        u.GetDC.restype = wintypes.HDC
+        u.GetDC.argtypes = [wintypes.HWND]
+        u.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+        u.SystemParametersInfoW.argtypes = [
+            wintypes.UINT,
+            wintypes.UINT,
+            ctypes.c_void_p,
+            wintypes.UINT,
+        ]
+        u.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
+        u.PeekMessageW.argtypes = [
+            ctypes.c_void_p,
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.UINT,
+            wintypes.UINT,
+        ]
+        u.UpdateLayeredWindow.restype = wintypes.BOOL
+        u.UpdateLayeredWindow.argtypes = [
+            wintypes.HWND,
+            wintypes.HDC,
+            ctypes.POINTER(_POINT),
+            ctypes.POINTER(_SIZE),
+            wintypes.HDC,
+            ctypes.POINTER(_POINT),
+            wintypes.DWORD,
+            ctypes.POINTER(_BLENDFUNCTION),
+            wintypes.DWORD,
+        ]
+        g.CreateCompatibleDC.restype = wintypes.HDC
+        g.CreateCompatibleDC.argtypes = [wintypes.HDC]
+        g.CreateDIBSection.restype = wintypes.HBITMAP
+        g.CreateDIBSection.argtypes = [
+            wintypes.HDC,
+            ctypes.c_void_p,
+            wintypes.UINT,
+            ctypes.POINTER(ctypes.c_void_p),
+            wintypes.HANDLE,
+            wintypes.DWORD,
+        ]
+        g.SelectObject.restype = wintypes.HGDIOBJ
+        g.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+        g.DeleteDC.argtypes = [wintypes.HDC]
+        g.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+
+        self._renderer = AuroraRenderer(scale=_system_scale())
+        w, h = self._renderer.tw, self._renderer.th
+
+        wndproc_type = ctypes.WINFUNCTYPE(
+            lresult, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
+        )
+        self._wndproc_ref = wndproc_type(
+            lambda hwnd, msg, wp, lp: u.DefWindowProcW(hwnd, msg, wp, lp)
+        )
+        hinst = k.GetModuleHandleW(None)
+        wc = _WNDCLASS()
+        wc.lpfnWndProc = ctypes.cast(self._wndproc_ref, ctypes.c_void_p)
+        wc.hInstance = hinst
+        wc.lpszClassName = "VoxPilotOverlayWnd"
+        u.RegisterClassW(ctypes.byref(wc))  # ignore "already registered"
+
+        ex_style = 0x00080000 | 0x00000008 | 0x00000080 | 0x00000020 | 0x08000000
+        ws_popup = 0x80000000
+
+        rect = wintypes.RECT()
+        u.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0)  # SPI_GETWORKAREA
+        screen_w = u.GetSystemMetrics(0)  # SM_CXSCREEN
+        self._x = (screen_w - w) // 2
+        self._y = rect.bottom - h
+
+        hwnd = u.CreateWindowExW(
+            ex_style,
+            "VoxPilotOverlayWnd",
+            "VoxPilot",
+            ws_popup,
+            self._x,
+            self._y,
+            w,
+            h,
+            None,
+            None,
+            hinst,
+            None,
+        )
+        if not hwnd:
+            raise OSError("CreateWindowExW failed")
+        self._hwnd = hwnd
+        try:
+            u.SetWindowDisplayAffinity(hwnd, 0x11)  # WDA_EXCLUDEFROMCAPTURE
         except Exception:
             pass
+        self._make_dib(w, h)
 
-        self._canvas = tk.Canvas(
-            root, width=self._w, height=self._h, bg=_CHROMA, highlightthickness=0, bd=0
+    def _make_dib(self, w: int, h: int) -> None:
+        bmi = _BITMAPINFOHEADER()
+        bmi.biSize = ctypes.sizeof(_BITMAPINFOHEADER)
+        bmi.biWidth = w
+        bmi.biHeight = -h  # top-down
+        bmi.biPlanes = 1
+        bmi.biBitCount = 32
+        bmi.biCompression = 0  # BI_RGB
+
+        self._screendc = self._u.GetDC(None)
+        self._memdc = self._g.CreateCompatibleDC(self._screendc)
+        bits = ctypes.c_void_p()
+        self._hbitmap = self._g.CreateDIBSection(
+            self._memdc, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0
         )
-        self._canvas.pack()
+        if not self._hbitmap:
+            raise OSError("CreateDIBSection failed")
+        self._bits = bits
+        self._g.SelectObject(self._memdc, self._hbitmap)
+        self._dib_size = w * h * 4
 
-        sw = root.winfo_screenwidth()
-        sh = root.winfo_screenheight()
-        x = (sw - self._w) // 2
-        y = sh - self._h - 96
-        root.geometry(f"{self._w}x{self._h}+{x}+{y}")
+    # -- loop -------------------------------------------------------------- #
+    def _loop(self) -> None:
+        msg = wintypes.MSG()
+        last = 0.0
+        while self._running:
+            while self._u.PeekMessageW(ctypes.byref(msg), None, 0, 0, 0x0001):  # PM_REMOVE
+                self._u.TranslateMessage(ctypes.byref(msg))
+                self._u.DispatchMessageW(ctypes.byref(msg))
+            self._apply_commands()
+            now = time.perf_counter()
+            if self._visible and (now - last) >= _FRAME_DT:
+                k = 0.55 if self._target > self._level else 0.18
+                self._level += k * (self._target - self._level)
+                self._render(now - self._t0)
+                last = now
+            time.sleep(0.004)
 
-        _exclude_from_capture(root)
-
-        self._running = True
-        root.after(16, self._tick)
-        root.mainloop()
-        self._running = False
-        self._root = None
-
-    # ------------------------------------------------------------------ #
-    # Internals (tkinter thread only)
-    # ------------------------------------------------------------------ #
-
-    def _tick(self) -> None:
-        root = self._root
-        if root is None:
-            return
-        # Apply queued commands.
+    def _apply_commands(self) -> None:
         try:
             while True:
-                self._apply(self._q.get_nowait())
+                cmd = self._q.get_nowait()
+                kind = cmd[0]
+                if kind == "level":
+                    raw = max(0.0, min(1.0, cmd[1]))
+                    self._target = 0.0 if raw < 0.02 else raw
+                elif kind in ("listen", "work"):
+                    self._mode = "listening" if kind == "listen" else "working"
+                    if not self._visible:
+                        self._u.ShowWindow(self._hwnd, 4)  # SW_SHOWNOACTIVATE
+                        self._visible = True
+                elif kind == "hide":
+                    if self._visible:
+                        self._u.ShowWindow(self._hwnd, 0)  # SW_HIDE
+                        self._visible = False
+                    self._target = self._level = 0.0
+                elif kind == "stop":
+                    self._running = False
         except queue.Empty:
             pass
 
-        if self._visible:
-            # Smooth the level toward the latest target for a fluid waveform.
-            self._level += (self._target - self._level) * 0.35
-            self._frame += 1
-            self._render()
-
-        if self._running and self._root is not None:
-            self._root.after(33, self._tick)
-
-    def _apply(self, cmd: tuple) -> None:
-        root = self._root
-        if root is None:
-            return
-        kind = cmd[0]
-        if kind == "level":
-            self._target = max(0.0, min(1.0, cmd[1]))
-        elif kind in ("listen", "work"):
-            self._mode = "listening" if kind == "listen" else "working"
-            if not self._visible:
-                root.deiconify()
-                try:
-                    root.attributes("-topmost", True)
-                    root.lift()
-                except Exception:
-                    pass
-                self._visible = True
-        elif kind == "hide":
-            if self._visible:
-                root.withdraw()
-                self._visible = False
-            self._target = 0.0
-            self._level = 0.0
-        elif kind == "stop":
-            try:
-                root.quit()
-            except Exception:
-                pass
-
-    # -- drawing --------------------------------------------------------- #
-
-    def _rounded_rect(self, x1: int, y1: int, x2: int, y2: int, r: int, fill: str) -> None:
-        c = self._canvas
-        if c is None:
-            return
-        c.create_rectangle(x1 + r, y1, x2 - r, y2, fill=fill, outline=fill)
-        c.create_rectangle(x1, y1 + r, x2, y2 - r, fill=fill, outline=fill)
-        c.create_oval(x1, y1, x1 + 2 * r, y1 + 2 * r, fill=fill, outline=fill)
-        c.create_oval(x2 - 2 * r, y1, x2, y1 + 2 * r, fill=fill, outline=fill)
-        c.create_oval(x1, y2 - 2 * r, x1 + 2 * r, y2, fill=fill, outline=fill)
-        c.create_oval(x2 - 2 * r, y2 - 2 * r, x2, y2, fill=fill, outline=fill)
-
-    def _render(self) -> None:
-        c = self._canvas
-        if c is None:
-            return
-        c.delete("all")
-        h = self._h
-        cy = h // 2
-        self._rounded_rect(4, 4, self._w - 4, h - 4, (h - 8) // 2, _PILL)
-
-        if self._mode == "listening":
-            r = 5 + 1.6 * (0.5 + 0.5 * math.sin(self._frame * 0.25))
-            c.create_oval(20 - r, cy - r, 20 + r, cy + r, fill=_REC, outline="")
-            c.create_text(
-                38, cy, text="Listening", anchor="w", fill=_FG, font=("Segoe UI", 12, "bold")
-            )
-            self._draw_waveform(132, self._w - 18, cy)
-        else:
-            self._draw_spinner(20, cy)
-            c.create_text(
-                38, cy, text="Working", anchor="w", fill=_FG, font=("Segoe UI", 12, "bold")
-            )
-            self._draw_traveling(120, self._w - 18, cy)
-
-    def _draw_waveform(self, x0: int, x1: int, cy: int) -> None:
-        c = self._canvas
-        if c is None:
-            return
-        n = 16
-        gap = (x1 - x0) / n
-        for i in range(n):
-            env = 0.35 + 0.65 * math.sin(math.pi * (i + 0.5) / n)
-            wob = 0.55 + 0.45 * math.sin(self._frame * 0.4 + i * 0.7)
-            mag = self._level * env * wob
-            bar_h = 3 + mag * 30
-            x = x0 + i * gap + gap * 0.22
-            w = max(2.0, gap * 0.56)
-            c.create_rectangle(x, cy - bar_h / 2, x + w, cy + bar_h / 2, fill=_ACCENT, outline="")
-
-    def _draw_traveling(self, x0: int, x1: int, cy: int) -> None:
-        c = self._canvas
-        if c is None:
-            return
-        n = 16
-        gap = (x1 - x0) / n
-        for i in range(n):
-            amp = max(0.0, math.sin(self._frame * 0.45 - i * 0.55))
-            bar_h = 3 + amp * 24
-            x = x0 + i * gap + gap * 0.22
-            w = max(2.0, gap * 0.56)
-            color = _ACCENT2 if amp > 0.6 else _ACCENT
-            c.create_rectangle(x, cy - bar_h / 2, x + w, cy + bar_h / 2, fill=color, outline="")
-
-    def _draw_spinner(self, cx: int, cy: int) -> None:
-        c = self._canvas
-        if c is None:
-            return
-        start = (self._frame * 11) % 360
-        c.create_oval(cx - 8, cy - 8, cx + 8, cy + 8, outline=_TRACK, width=3)
-        c.create_arc(
-            cx - 8,
-            cy - 8,
-            cx + 8,
-            cy + 8,
-            start=start,
-            extent=110,
-            style="arc",
-            outline=_ACCENT,
-            width=3,
+    def _render(self, t: float) -> None:
+        img = self._renderer.frame(self._mode, self._level, t)
+        buf = _premultiplied_bgra(img)
+        ctypes.memmove(self._bits, buf, min(len(buf), self._dib_size))
+        w, h = self._renderer.tw, self._renderer.th
+        dst = _POINT(self._x, self._y)
+        size = _SIZE(w, h)
+        src = _POINT(0, 0)
+        blend = _BLENDFUNCTION(0, 0, 255, 1)  # AC_SRC_OVER, SCA=255, AC_SRC_ALPHA
+        self._u.UpdateLayeredWindow(
+            self._hwnd,
+            self._screendc,
+            ctypes.byref(dst),
+            ctypes.byref(size),
+            self._memdc,
+            ctypes.byref(src),
+            0,
+            ctypes.byref(blend),
+            0x02,  # ULW_ALPHA
         )
+
+    def _cleanup(self) -> None:
+        try:
+            if self._hbitmap:
+                self._g.DeleteObject(self._hbitmap)
+            if self._memdc:
+                self._g.DeleteDC(self._memdc)
+            if self._screendc:
+                self._u.ReleaseDC(None, self._screendc)
+            if self._hwnd:
+                self._u.DestroyWindow(self._hwnd)
+        except Exception:
+            pass
+
+
+# Pick the backend: layered window on Windows, tkinter elsewhere.
+Overlay = _WinOverlay if sys.platform == "win32" else TkOverlay
