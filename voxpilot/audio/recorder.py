@@ -8,6 +8,7 @@ blocks the (latency-sensitive) pynput callback.
 
 from __future__ import annotations
 
+import sys
 import threading
 from collections.abc import Callable
 
@@ -67,11 +68,18 @@ class PushToTalkRecorder:
         self._lock = threading.Lock()
         self._stream: sd.InputStream | None = None
         self._active = False
+        self.level: float = 0.0
 
     def _cb(self, indata, frames, time_info, status) -> None:
-        """sounddevice callback: append a copy of the incoming audio block."""
+        """sounddevice callback: append a copy of the block and update the level."""
         with self._lock:
             self._frames.append(indata.copy())
+        try:
+            peak = float(np.max(np.abs(indata))) if indata.size else 0.0
+        except Exception:
+            peak = 0.0
+        # Scaled peak amplitude (0..1) used to render the live mic meter.
+        self.level = min(1.0, peak * 2.0)
 
     def _ensure_stream(self) -> None:
         """Create the input stream lazily on first use."""
@@ -87,6 +95,7 @@ class PushToTalkRecorder:
         """Begin recording, clearing any previously captured frames."""
         with self._lock:
             self._frames = []
+        self.level = 0.0
         self._ensure_stream()
         assert self._stream is not None
         self._stream.start()
@@ -102,6 +111,7 @@ class PushToTalkRecorder:
         if self._stream is not None:
             self._stream.stop()
         self._active = False
+        self.level = 0.0
         with self._lock:
             frames = self._frames
             self._frames = []
@@ -150,6 +160,7 @@ class HotkeyController:
         hotkey: HotkeyConfig,
         recorder: PushToTalkRecorder,
         on_utterance: Callable[[np.ndarray], None],
+        show_meter: bool = True,
     ) -> None:
         """Initialize the controller.
 
@@ -166,11 +177,46 @@ class HotkeyController:
         self._listener: keyboard.Listener | None = None
         self._recording = False
         self._lock = threading.Lock()
+        self.show_meter = show_meter
+        self._meter_stop = threading.Event()
+        self._meter_thread: threading.Thread | None = None
 
     def _dispatch(self, audio: np.ndarray) -> None:
         """Run the utterance callback on a daemon thread."""
         thread = threading.Thread(target=self.on_utterance, args=(audio,), daemon=True)
         thread.start()
+
+    def _start_meter(self) -> None:
+        """Start the live microphone level meter (no-op if disabled)."""
+        if not self.show_meter:
+            return
+        self._meter_stop.clear()
+        self._meter_thread = threading.Thread(target=self._meter_loop, daemon=True)
+        self._meter_thread.start()
+
+    def _stop_meter(self) -> None:
+        """Stop the live meter thread and finalize its line."""
+        if self._meter_thread is None:
+            return
+        self._meter_stop.set()
+        self._meter_thread.join(timeout=0.4)
+        self._meter_thread = None
+
+    def _meter_loop(self) -> None:
+        """Render a live mic-level bar to stdout while recording."""
+        width = 28
+        key = self.hotkey.ptt_key.upper()
+        sys.stdout.write(f"\n  Listening - speak now (release {key} to send)\n")
+        sys.stdout.flush()
+        while not self._meter_stop.is_set():
+            level = max(0.0, min(1.0, float(getattr(self.recorder, "level", 0.0) or 0.0)))
+            filled = int(level * width)
+            bar = "#" * filled + "-" * (width - filled)
+            sys.stdout.write(f"\r  mic [{bar}]")
+            sys.stdout.flush()
+            self._meter_stop.wait(0.06)
+        sys.stdout.write(f"\r  mic [{'-' * width}]  captured.\n")
+        sys.stdout.flush()
 
     def _matches(self, key) -> bool:
         """Return True if the pressed/released key is the PTT key."""
@@ -182,12 +228,14 @@ class HotkeyController:
             return
         if self.hotkey.mode == "toggle":
             with self._lock:
-                if not self._recording:
-                    self._recording = True
-                    self.recorder.start()
-                    return
-                self._recording = False
+                toggle_on = not self._recording
+                self._recording = toggle_on
+            if toggle_on:
+                self.recorder.start()
+                self._start_meter()
+                return
             audio = self.recorder.stop()
+            self._stop_meter()
             self._dispatch(audio)
             return
         # push_to_talk
@@ -196,6 +244,7 @@ class HotkeyController:
                 return
             self._recording = True
         self.recorder.start()
+        self._start_meter()
 
     def _on_release(self, key) -> None:
         """Handle a key release (only meaningful for push-to-talk)."""
@@ -208,6 +257,7 @@ class HotkeyController:
                 return
             self._recording = False
         audio = self.recorder.stop()
+        self._stop_meter()
         self._dispatch(audio)
 
     def start(self) -> None:
@@ -216,7 +266,8 @@ class HotkeyController:
         self._listener.start()
 
     def stop(self) -> None:
-        """Stop the keyboard listener if it is running."""
+        """Stop the keyboard listener and live meter if running."""
+        self._stop_meter()
         if self._listener is not None:
             try:
                 self._listener.stop()

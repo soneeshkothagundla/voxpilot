@@ -295,7 +295,9 @@ def main(argv: list[str] | None = None) -> int:
             feedback.say(f"Error: {exc}")
         feedback.status("IDLE")
 
-    controller = HotkeyController(cfg.hotkey, recorder, on_utterance)
+    controller = HotkeyController(
+        cfg.hotkey, recorder, on_utterance, show_meter=cfg.feedback.verbose
+    )
 
     guard.start_kill_switch(cfg.hotkey)
     controller.start()

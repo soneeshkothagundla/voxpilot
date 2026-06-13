@@ -7,6 +7,7 @@ module never imports ``faster_whisper`` or downloads a model.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -67,6 +68,18 @@ class FasterWhisperSTT(STTBackend):
             return
         device = self._resolve_device()
         compute_type = self._resolve_compute_type(device)
+
+        # Quiet noisy first-run Hugging Face Hub warnings (symlinks, anon token)
+        # before the hub is imported by faster-whisper.
+        os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+        os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+        try:
+            from huggingface_hub.utils import logging as hf_logging
+
+            hf_logging.set_verbosity_error()
+        except Exception:
+            pass
+
         from faster_whisper import WhisperModel
 
         self._model = WhisperModel(self.model_size, device=device, compute_type=compute_type)
