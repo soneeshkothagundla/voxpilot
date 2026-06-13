@@ -56,6 +56,9 @@ dev = [
 e2e = [
     "playwright>=1.48",
 ]
+serve = [
+    "flask>=3.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/soneeshkothagundla/voxpilot"

@@ -247,6 +247,20 @@ powershell -ExecutionPolicy Bypass -File scripts\install_shortcuts.ps1
 powershell -ExecutionPolicy Bypass -File scripts\install_shortcuts.ps1 -Startup
 ```
 
+### Run it in a container (use your PC in parallel)
+
+A computer-use agent shares your one cursor/keyboard/screen, so you can't work
+*while* it acts on your normal desktop. To run it on an **isolated desktop** you
+watch/drive in a browser — leaving your real machine free — run VoxPilot in
+Docker (`--serve` mode + a virtual display + noVNC). See **[DOCKER.md](DOCKER.md)**:
+
+```bash
+docker compose up --build        # then open http://localhost:5000
+```
+
+In the container you **type** commands (no mic) and watch the agent operate an
+embedded Firefox desktop. Your host is never touched.
+
 ### Command-line options
 
 | Flag | Description |

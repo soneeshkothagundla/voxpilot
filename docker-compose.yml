@@ -1,0 +1,23 @@
+# Run VoxPilot in an isolated Linux desktop you watch/drive in a browser, so you
+# can use your own machine in parallel. Needs Docker Desktop. See DOCKER.md.
+#
+#   docker compose up --build
+#   then open http://localhost:5000
+#
+# The Bedrock key is read from your local .env (NOT baked into the image).
+services:
+  voxpilot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: voxpilot:latest
+    container_name: voxpilot
+    ports:
+      - "5000:5000" # command UI (open this)
+      - "6080:6080" # noVNC desktop view (embedded in the UI)
+    env_file:
+      - .env
+    environment:
+      AWS_REGION: "${AWS_REGION:-us-east-1}"
+    shm_size: "1gb" # Firefox needs a decent /dev/shm
+    stop_grace_period: 5s

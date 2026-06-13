@@ -104,6 +104,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Desktop mode: on-screen overlay + system tray, no terminal needed "
         "(launch with pythonw.exe to hide the console entirely).",
     )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="Headless web command UI (for Docker/VM): drive + watch in a browser.",
+    )
+    parser.add_argument(
+        "--port",
+        metavar="N",
+        type=int,
+        default=5000,
+        help="Port for the --serve web UI (default 5000).",
+    )
     return parser
 
 
@@ -274,12 +286,10 @@ def main(argv: list[str] | None = None) -> int:
 
     # Heavy / pyautogui-touching imports happen AFTER ensure_dpi_awareness().
     from voxpilot.agent import AgentLoop, ComputerUseClient
-    from voxpilot.audio import HotkeyController, PushToTalkRecorder
     from voxpilot.feedback import Feedback
     from voxpilot.safety import SafetyGuard
     from voxpilot.screen.actions import ActionExecutor
     from voxpilot.screen.screenshot import ScreenCapture
-    from voxpilot.stt import create_stt
 
     feedback = Feedback(cfg.feedback)
     capture = ScreenCapture(cfg.agent.target_width, cfg.agent.target_height)
@@ -293,6 +303,16 @@ def main(argv: list[str] | None = None) -> int:
     # ------------------------------------------------------------------ #
     if args.windowed:
         return run_windowed(cfg, args, feedback, capture, guard, client, executor, loop)
+
+    # ------------------------------------------------------------------ #
+    # --serve: headless web command UI (for containers/VMs; type, don't speak).
+    # ------------------------------------------------------------------ #
+    if args.serve:
+        from voxpilot import web
+
+        feedback.say(f"Serving the VoxPilot web UI on port {args.port}.")
+        web.serve(cfg, loop, feedback, guard, port=args.port)
+        return 0
 
     # ------------------------------------------------------------------ #
     # --once: run a single instruction then exit (non-microphone path).
@@ -310,6 +330,9 @@ def main(argv: list[str] | None = None) -> int:
     # Interactive push-to-talk mode.
     # ------------------------------------------------------------------ #
     feedback.say("Loading speech recognition...")
+    from voxpilot.audio import HotkeyController, PushToTalkRecorder
+    from voxpilot.stt import create_stt
+
     stt = create_stt(cfg.stt, cfg.secrets)
     try:
         feedback.status("THINKING")

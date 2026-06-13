@@ -1,0 +1,28 @@
+# Keep the build context small and never bake secrets into the image.
+.git/
+.github/
+.venv/
+venv/
+env/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Secrets — read host-side via compose env_file, never copied into the image.
+.env
+.env.*
+!.env.example
+
+# Runtime artifacts / docs not needed to build
+logs/
+*.log
+*.wav
+*.mp3
+scripts/_*.png
+scripts/_pw_test_page.html
