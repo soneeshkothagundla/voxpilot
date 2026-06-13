@@ -13,6 +13,7 @@ from __future__ import annotations
 import queue
 import sys
 import threading
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -34,6 +35,10 @@ class Feedback:
         self._queue: queue.Queue[str | None] = queue.Queue()
         self._worker: threading.Thread | None = None
         self._tts_ok: bool = False
+        #: Optional sinks so a GUI (tray/overlay) can mirror feedback. Set by the
+        #: caller after construction; both are best-effort and may be None.
+        self.status_sink: Callable[[str], None] | None = None
+        self.message_sink: Callable[[str], None] | None = None
 
         if cfg.tts:
             self._tts_ok = True
@@ -97,6 +102,11 @@ class Feedback:
         """
         if self.cfg.verbose:
             print(f"VoxPilot: {text}")
+        if self.message_sink is not None:
+            try:
+                self.message_sink(text)
+            except Exception:  # noqa: BLE001
+                pass
         if self.cfg.tts and self._tts_ok and self._worker is not None:
             try:
                 self._queue.put(text)
@@ -111,6 +121,11 @@ class Feedback:
         """
         if self.cfg.verbose:
             print(f"[{state}]", file=sys.stderr)
+        if self.status_sink is not None:
+            try:
+                self.status_sink(state)
+            except Exception:  # noqa: BLE001
+                pass
 
     def shutdown(self) -> None:
         """Stop the worker thread, draining any pending speech briefly."""

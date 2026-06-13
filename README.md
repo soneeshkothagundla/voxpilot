@@ -178,7 +178,7 @@ cp config.example.yaml config.yaml
 | `hotkey` | `kill_press_count` | `3` | Presses required to abort. |
 | `hotkey` | `kill_press_window_s` | `1.0` | Time window (seconds) for the presses. |
 | `safety` | `dry_run` | `false` | Log actions but **do not** execute them. |
-| `safety` | `confirm_destructive` | `true` | Require confirmation before risky actions. |
+| `safety` | `confirm_destructive` | `false` | Prompt before risky actions (off by default so it just runs; kill-switch + corner fail-safe + dry-run remain). |
 | `safety` | `confirmation_mode` | `onscreen` | `onscreen` / `spoken` / `both`. |
 | `safety` | `failsafe_corner` | `true` | Honor the pyautogui corner fail-safe. |
 | `safety` | `action_log` | `true` | Append executed actions to `~/.voxpilot/logs/`. |
@@ -212,6 +212,35 @@ python -m voxpilot --no-tts --quiet
 ```
 
 If you installed the console script, `voxpilot` works the same as `python -m voxpilot`.
+
+### Desktop mode (no terminal, on-screen overlay)
+
+For a Wispr-Flow-style experience — a floating pill that shows it's listening, a
+system-tray icon, and **no terminal window** — use `--windowed`:
+
+```bash
+# Desktop mode in the current terminal (overlay + tray)
+python -m voxpilot --windowed
+
+# Fully windowless (no console at all) — launch via pythonw:
+pythonw -m voxpilot --windowed
+```
+
+While you hold **F9**, a small overlay appears near the bottom of the screen with
+a live mic-level bar; release to send. The tray icon reflects state
+(idle / listening / thinking / acting). **Quit** from the tray menu or with
+**Ctrl+Alt+Q**. In this mode output is written to `~/.voxpilot/logs/voxpilot.log`.
+
+To launch it from the Start Menu / Desktop (or at login) with no terminal, run
+the installer once:
+
+```powershell
+# Start Menu + Desktop shortcuts
+powershell -ExecutionPolicy Bypass -File scripts\install_shortcuts.ps1
+
+# ...and also start automatically at login
+powershell -ExecutionPolicy Bypass -File scripts\install_shortcuts.ps1 -Startup
+```
 
 ### Command-line options
 

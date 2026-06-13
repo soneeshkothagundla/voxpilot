@@ -1,10 +1,11 @@
 """UI subsystem for VoxPilot.
 
-Exposes :class:`StatusIndicator`, a lightweight, dependency-optional status
-display (console, plus an optional system-tray icon if ``pystray`` is
-installed).
+Exposes the on-screen recording :class:`Overlay`, the :class:`TrayIcon` used in
+windowed mode, and the lighter :class:`StatusIndicator`. All are
+dependency-optional and degrade gracefully when GUI libraries are unavailable.
 """
 
-from .tray import StatusIndicator
+from .overlay import Overlay
+from .tray import StatusIndicator, TrayIcon
 
-__all__ = ["StatusIndicator"]
+__all__ = ["Overlay", "StatusIndicator", "TrayIcon"]

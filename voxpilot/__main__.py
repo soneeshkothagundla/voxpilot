@@ -98,6 +98,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Reduce console output (disables verbose feedback).",
     )
+    parser.add_argument(
+        "--windowed",
+        action="store_true",
+        help="Desktop mode: on-screen overlay + system tray, no terminal needed "
+        "(launch with pythonw.exe to hide the console entirely).",
+    )
     return parser
 
 
@@ -198,6 +204,32 @@ def _configure_stdio() -> None:
                 pass
 
 
+def _redirect_stdio_to_log() -> None:
+    """Point stdout/stderr at a log file for windowed/pythonw launches.
+
+    Under ``pythonw.exe`` there is no console and ``sys.stdout``/``sys.stderr``
+    are ``None``, so any ``print`` would raise. Redirect both to
+    ``~/.voxpilot/logs/voxpilot.log`` so output is captured instead of crashing.
+    """
+    import io
+    from pathlib import Path
+
+    try:
+        log_dir = Path.home() / ".voxpilot" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        handle = open(  # noqa: SIM115 - kept open for the process lifetime
+            log_dir / "voxpilot.log", "a", encoding="utf-8", errors="replace", buffering=1
+        )
+        sys.stdout = handle
+        sys.stderr = handle
+    except Exception:  # noqa: BLE001 - last resort: swallow output, never crash
+        sink = io.StringIO()
+        if sys.stdout is None:
+            sys.stdout = sink
+        if sys.stderr is None:
+            sys.stderr = sink
+
+
 def main(argv: list[str] | None = None) -> int:
     """VoxPilot entry point.
 
@@ -207,9 +239,15 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         Process exit code: 0 on success, 2 on configuration error.
     """
-    _configure_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # In windowed mode (often launched via pythonw.exe, which has no console)
+    # redirect output to a log file so prints never crash; otherwise force UTF-8.
+    if args.windowed:
+        _redirect_stdio_to_log()
+    else:
+        _configure_stdio()
 
     # Configure DPI awareness BEFORE importing any pyautogui/mss-touching module.
     ensure_dpi_awareness()
@@ -249,6 +287,12 @@ def main(argv: list[str] | None = None) -> int:
     client = ComputerUseClient(cfg, use_opus=args.opus)
     executor = ActionExecutor(capture, guard)
     loop = AgentLoop(client, capture, executor, guard, feedback, cfg)
+
+    # ------------------------------------------------------------------ #
+    # --windowed: desktop mode (on-screen overlay + tray, no terminal needed).
+    # ------------------------------------------------------------------ #
+    if args.windowed:
+        return run_windowed(cfg, args, feedback, capture, guard, client, executor, loop)
 
     # ------------------------------------------------------------------ #
     # --once: run a single instruction then exit (non-microphone path).
@@ -315,6 +359,94 @@ def main(argv: list[str] | None = None) -> int:
         controller.stop()
         guard.stop_kill_switch()
         recorder.close()
+        feedback.shutdown()
+    return 0
+
+
+def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) -> int:
+    """Run VoxPilot in desktop mode: on-screen overlay + system tray, no terminal.
+
+    The tkinter overlay event loop runs on this (main) thread; the global hotkey
+    listener, STT warm-up, and agent loop all run on background threads. Quit via
+    the tray menu or the Ctrl+Alt+Q hotkey.
+    """
+    import threading
+
+    from pynput import keyboard as kb
+
+    from voxpilot.audio import HotkeyController, PushToTalkRecorder
+    from voxpilot.stt import create_stt
+    from voxpilot.ui import Overlay, TrayIcon
+
+    # There is no terminal to answer a confirmation prompt in windowed mode.
+    cfg.safety.confirm_destructive = False
+    guard.confirm_enabled = False
+
+    overlay = Overlay()
+    tray = TrayIcon(on_quit=overlay.stop)
+    feedback.status_sink = lambda state: tray.set_state(state.lower())
+
+    stt = create_stt(cfg.stt, cfg.secrets)
+
+    def on_utterance(audio) -> None:
+        """Transcribe a captured utterance and drive the agent loop."""
+        feedback.status("THINKING")
+        try:
+            text = stt.transcribe(audio)
+        except Exception as exc:  # noqa: BLE001 - keep the listener alive
+            feedback.say(f"Transcription failed: {exc}")
+            feedback.status("IDLE")
+            return
+        if not text or not text.strip():
+            feedback.status("IDLE")
+            return
+        feedback.say(f"Heard: {text}")
+        try:
+            loop.run(text)
+        except Exception as exc:  # noqa: BLE001 - keep the listener alive
+            feedback.say(f"Error: {exc}")
+        feedback.status("IDLE")
+
+    recorder = PushToTalkRecorder()
+    controller = HotkeyController(
+        cfg.hotkey,
+        recorder,
+        on_utterance,
+        show_meter=False,
+        on_listen_start=overlay.show_listening,
+        on_level=overlay.update_level,
+        on_listen_stop=overlay.hide,
+    )
+
+    def warm_up() -> None:
+        try:
+            feedback.status("THINKING")
+            stt.warm_up()
+        except Exception as exc:  # noqa: BLE001
+            feedback.say(f"STT warm-up failed: {exc}")
+        feedback.status("IDLE")
+
+    quit_hotkey = kb.GlobalHotKeys({"<ctrl>+<alt>+q": overlay.stop})
+
+    tray.start()
+    guard.start_kill_switch(cfg.hotkey)
+    threading.Thread(target=warm_up, name="voxpilot-warmup", daemon=True).start()
+    controller.start()
+    quit_hotkey.start()
+    feedback.say(f"VoxPilot ready. Hold {cfg.hotkey.ptt_key.upper()} to talk.")
+    feedback.status("IDLE")
+
+    try:
+        overlay.run()  # blocks on the main thread until overlay.stop()
+    finally:
+        controller.stop()
+        try:
+            quit_hotkey.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        guard.stop_kill_switch()
+        recorder.close()
+        tray.stop()
         feedback.shutdown()
     return 0
 

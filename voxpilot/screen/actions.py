@@ -134,12 +134,14 @@ class ActionExecutor:
         *,
         type_interval: float = 0.012,
         type_chunk: int = 50,
+        move_duration: float = 0.4,
     ) -> None:
         """Store collaborators and typing parameters."""
         self.capture = capture
         self.guard = guard
         self.type_interval = type_interval
         self.type_chunk = type_chunk
+        self.move_duration = move_duration
         self.dry_run = guard.dry_run
 
     def execute(self, action_input: dict, scale: ScaleResult) -> ActionResult:
@@ -244,6 +246,14 @@ class ActionExecutor:
         """Convert a model ``[x, y]`` coordinate to native screen pixels."""
         return to_screen(coord[0], coord[1], scale)
 
+    def _move(self, x: int, y: int) -> None:
+        """Move the cursor with a visible, eased glide so the user can follow it."""
+        tween = getattr(pyautogui, "easeInOutQuad", None)
+        if tween is not None:
+            pyautogui.moveTo(x, y, duration=self.move_duration, tween=tween)
+        else:
+            pyautogui.moveTo(x, y, duration=self.move_duration)
+
     def _click_with_modifier(
         self,
         x: int,
@@ -277,12 +287,12 @@ class ActionExecutor:
     def _act_mouse_move(self, action_input: dict, scale: ScaleResult) -> None:
         """Move the mouse to the given coordinate."""
         x, y = self._xy(action_input["coordinate"], scale)
-        pyautogui.moveTo(x, y, duration=0.1)
+        self._move(x, y)
 
     def _click_at(self, action_input: dict, scale: ScaleResult, button: str, clicks: int) -> None:
         """Move to the coordinate and click, honoring an optional modifier."""
         x, y = self._xy(action_input["coordinate"], scale)
-        pyautogui.moveTo(x, y, duration=0.1)
+        self._move(x, y)
         self._click_with_modifier(x, y, button, clicks, action_input.get("text"))
 
     def _act_left_click(self, action_input: dict, scale: ScaleResult) -> None:
@@ -309,15 +319,15 @@ class ActionExecutor:
         """Drag with the left button from a start coordinate to an end one."""
         start = self._xy(action_input["start_coordinate"], scale)
         end = self._xy(action_input["coordinate"], scale)
-        pyautogui.moveTo(*start)
-        pyautogui.dragTo(*end, button="left")
+        self._move(*start)
+        pyautogui.dragTo(*end, duration=max(self.move_duration, 0.3), button="left")
 
     def _act_left_mouse_down(self, action_input: dict, scale: ScaleResult) -> None:
         """Press the left mouse button down (optionally at a coordinate)."""
         coord = action_input.get("coordinate")
         if coord is not None:
             x, y = self._xy(coord, scale)
-            pyautogui.moveTo(x, y, duration=0.1)
+            self._move(x, y)
         pyautogui.mouseDown(button="left")
 
     def _act_left_mouse_up(self, action_input: dict, scale: ScaleResult) -> None:
@@ -325,7 +335,7 @@ class ActionExecutor:
         coord = action_input.get("coordinate")
         if coord is not None:
             x, y = self._xy(coord, scale)
-            pyautogui.moveTo(x, y, duration=0.1)
+            self._move(x, y)
         pyautogui.mouseUp(button="left")
 
     def _act_key(self, action_input: dict, scale: ScaleResult) -> None:
@@ -360,7 +370,7 @@ class ActionExecutor:
         coord = action_input.get("coordinate")
         if coord is not None:
             x, y = self._xy(coord, scale)
-            pyautogui.moveTo(x, y, duration=0.1)
+            self._move(x, y)
         else:
             x, y = pyautogui.position()
 

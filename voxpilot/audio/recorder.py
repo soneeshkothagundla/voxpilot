@@ -161,6 +161,9 @@ class HotkeyController:
         recorder: PushToTalkRecorder,
         on_utterance: Callable[[np.ndarray], None],
         show_meter: bool = True,
+        on_listen_start: Callable[[], None] | None = None,
+        on_level: Callable[[float], None] | None = None,
+        on_listen_stop: Callable[[], None] | None = None,
     ) -> None:
         """Initialize the controller.
 
@@ -169,6 +172,14 @@ class HotkeyController:
             recorder: The recorder to start/stop.
             on_utterance: Callback invoked with captured audio after each
                 utterance; executed on a daemon thread.
+            show_meter: Render the terminal mic-level bar (ignored when
+                ``on_level`` is supplied).
+            on_listen_start: Optional hook fired when recording begins (e.g.
+                show an on-screen overlay).
+            on_level: Optional hook fired ~16x/sec with the live mic level
+                (0.0-1.0) while recording; when set, the terminal bar is skipped.
+            on_listen_stop: Optional hook fired when recording ends (e.g. hide
+                the overlay).
         """
         self.hotkey = hotkey
         self.recorder = recorder
@@ -178,6 +189,9 @@ class HotkeyController:
         self._recording = False
         self._lock = threading.Lock()
         self.show_meter = show_meter
+        self.on_listen_start = on_listen_start
+        self.on_level = on_level
+        self.on_listen_stop = on_listen_stop
         self._meter_stop = threading.Event()
         self._meter_thread: threading.Thread | None = None
 
@@ -187,36 +201,55 @@ class HotkeyController:
         thread.start()
 
     def _start_meter(self) -> None:
-        """Start the live microphone level meter (no-op if disabled)."""
-        if not self.show_meter:
+        """Fire the listen-start hook and begin live-level rendering."""
+        if self.on_listen_start is not None:
+            try:
+                self.on_listen_start()
+            except Exception:  # noqa: BLE001 - a UI hook must never break recording
+                pass
+        if self.on_level is None and not self.show_meter:
             return
         self._meter_stop.clear()
         self._meter_thread = threading.Thread(target=self._meter_loop, daemon=True)
         self._meter_thread.start()
 
     def _stop_meter(self) -> None:
-        """Stop the live meter thread and finalize its line."""
-        if self._meter_thread is None:
-            return
-        self._meter_stop.set()
-        self._meter_thread.join(timeout=0.4)
-        self._meter_thread = None
+        """Stop live-level rendering and fire the listen-stop hook."""
+        if self._meter_thread is not None:
+            self._meter_stop.set()
+            self._meter_thread.join(timeout=0.4)
+            self._meter_thread = None
+        if self.on_listen_stop is not None:
+            try:
+                self.on_listen_stop()
+            except Exception:  # noqa: BLE001
+                pass
 
     def _meter_loop(self) -> None:
-        """Render a live mic-level bar to stdout while recording."""
-        width = 28
-        key = self.hotkey.ptt_key.upper()
-        sys.stdout.write(f"\n  Listening - speak now (release {key} to send)\n")
-        sys.stdout.flush()
+        """Push the live mic level to the ``on_level`` hook, or a stdout bar."""
+        use_cb = self.on_level is not None
+        if not use_cb:
+            key = self.hotkey.ptt_key.upper()
+            sys.stdout.write(f"\n  Listening - speak now (release {key} to send)\n")
+            sys.stdout.flush()
         while not self._meter_stop.is_set():
             level = max(0.0, min(1.0, float(getattr(self.recorder, "level", 0.0) or 0.0)))
-            filled = int(level * width)
-            bar = "#" * filled + "-" * (width - filled)
-            sys.stdout.write(f"\r  mic [{bar}]")
-            sys.stdout.flush()
+            if use_cb:
+                try:
+                    self.on_level(level)
+                except Exception:  # noqa: BLE001
+                    pass
+            else:
+                width = 28
+                filled = int(level * width)
+                bar = "#" * filled + "-" * (width - filled)
+                sys.stdout.write(f"\r  mic [{bar}]")
+                sys.stdout.flush()
             self._meter_stop.wait(0.06)
-        sys.stdout.write(f"\r  mic [{'-' * width}]  captured.\n")
-        sys.stdout.flush()
+        if not use_cb:
+            width = 28
+            sys.stdout.write(f"\r  mic [{'-' * width}]  captured.\n")
+            sys.stdout.flush()
 
     def _matches(self, key) -> bool:
         """Return True if the pressed/released key is the PTT key."""

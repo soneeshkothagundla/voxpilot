@@ -77,7 +77,7 @@ class SafetyConfig:
     """Safety gating: dry-run, confirmations, fail-safe, and logging."""
 
     dry_run: bool = False
-    confirm_destructive: bool = True
+    confirm_destructive: bool = False
     confirmation_mode: str = "onscreen"
     failsafe_corner: bool = True
     action_log: bool = True

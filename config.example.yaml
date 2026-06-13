@@ -75,7 +75,7 @@ safety:
 
   # Require confirmation before risky actions (typing into shells, anything
   # that looks like Send/Delete/Submit, etc.).
-  confirm_destructive: true
+  confirm_destructive: false
 
   # How to confirm: "spoken" (say yes), "onscreen" (terminal prompt), "both".
   confirmation_mode: onscreen
