@@ -39,6 +39,7 @@ ENV/
 .voxpilot/
 logs/
 *.log
+scripts/_pw_test_page.html
 
 # Model caches (faster-whisper / huggingface / ctranslate2)
 .cache/

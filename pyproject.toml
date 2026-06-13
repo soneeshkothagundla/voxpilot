@@ -52,10 +52,13 @@ dev = [
     "ruff>=0.6",
     "black>=24.0",
 ]
+e2e = [
+    "playwright>=1.48",
+]
 
 [project.urls]
-Homepage = "https://github.com/soneeshk/voxpilot"
-Issues = "https://github.com/soneeshk/voxpilot/issues"
+Homepage = "https://github.com/soneeshkothagundla/voxpilot"
+Issues = "https://github.com/soneeshkothagundla/voxpilot/issues"
 
 [project.scripts]
 voxpilot = "voxpilot.__main__:main"

@@ -338,6 +338,20 @@ Tests stub out hardware (a fake `pyautogui`, dummy capture/STT, scripted fake
 Anthropic client), so they run without a screen, microphone, network, or model
 download.
 
+### End-to-end browser test (optional, live)
+
+`scripts/playwright_e2e_test.py` puts **Playwright in the loop as a verifier**: it
+opens a real Chromium page with a text box, runs VoxPilot *live* with an
+instruction to type a known phrase into it, then reads the DOM back to confirm the
+text actually landed. This is a real integration test — it needs a display, your
+Bedrock key in `.env`, and the `e2e` extra:
+
+```bash
+pip install -e ".[e2e]"
+playwright install chromium
+python scripts/playwright_e2e_test.py   # exit code 0 = PASS
+```
+
 ---
 
 ## Troubleshooting
