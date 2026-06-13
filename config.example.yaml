@@ -1,0 +1,96 @@
+# =============================================================================
+# VoxPilot configuration (non-secret settings).
+# Copy to "config.yaml" to customize, or run with defaults (this file is loaded
+# as a fallback if config.yaml is absent). Secrets live in .env, not here.
+# =============================================================================
+
+agent:
+  # Where to send computer-use requests: "bedrock" (default) or "anthropic".
+  provider: bedrock
+
+  # Model id used for normal operation.
+  #   bedrock  -> e.g. "anthropic.claude-sonnet-4-6" (or a region inference
+  #               profile like "us.anthropic.claude-sonnet-4-6-v1:0")
+  #   anthropic-> e.g. "claude-sonnet-4-6"
+  model: us.anthropic.claude-sonnet-4-6
+
+  # A more capable model you can switch to (used when --opus is passed).
+  #   bedrock  -> "anthropic.claude-opus-4-8"
+  #   anthropic-> "claude-opus-4-8"
+  opus_model: us.anthropic.claude-opus-4-8
+
+  # AWS region for the bedrock provider.
+  region: us-east-1
+
+  # Max tokens per Claude response.
+  max_tokens: 4096
+
+  # Hard cap on agent-loop iterations to prevent runaways.
+  max_iterations: 40
+
+  # Resolution the screenshot is scaled DOWN to before being sent to Claude.
+  # Coordinates Claude returns in this space are scaled back UP to your real
+  # screen. WXGA (1280x800) is a good default for computer use.
+  target_width: 1280
+  target_height: 800
+
+stt:
+  # Speech-to-text backend: "faster_whisper" (local, offline, default) or
+  # "openai" (requires OPENAI_API_KEY and stt.openai opt-in below).
+  backend: faster_whisper
+
+  # faster-whisper model size: tiny | base | small | medium | large-v3
+  # Smaller = faster + less accurate. "base" is a good default.
+  model: base
+
+  # Compute device: auto | cpu | cuda
+  device: auto
+
+  # Quantization: auto | int8 | int8_float16 | float16 | float32
+  compute_type: auto
+
+  # Force a language code (e.g. "en") or null to autodetect.
+  language: null
+
+  # OpenAI Whisper API options (only used when backend: openai).
+  openai:
+    model: whisper-1
+
+hotkey:
+  # "push_to_talk": hold the key to record, release to transcribe + act.
+  # "toggle": tap once to start recording, tap again to stop.
+  mode: push_to_talk
+
+  # Push-to-talk key (pynput name). Examples: ctrl_r, ctrl_l, alt_r, f9, cmd_r.
+  ptt_key: ctrl_r
+
+  # Kill switch: press this key N times quickly to abort the running task.
+  kill_key: esc
+  kill_press_count: 3
+  kill_press_window_s: 1.0
+
+safety:
+  # Dry-run: log actions but DO NOT execute them on the real mouse/keyboard.
+  dry_run: false
+
+  # Require confirmation before risky actions (typing into shells, anything
+  # that looks like Send/Delete/Submit, etc.).
+  confirm_destructive: true
+
+  # How to confirm: "spoken" (say yes), "onscreen" (terminal prompt), "both".
+  confirmation_mode: onscreen
+
+  # Honor pyautogui's corner fail-safe (slam mouse to a screen corner to abort).
+  failsafe_corner: true
+
+  # Append every executed action to ~/.voxpilot/logs/actions-*.log
+  action_log: true
+
+feedback:
+  # Speak short confirmations out loud (pyttsx3, offline).
+  tts: true
+  tts_rate: 180      # words per minute
+  tts_volume: 1.0    # 0.0 - 1.0
+
+  # Print status/confirmations to the terminal.
+  verbose: true
