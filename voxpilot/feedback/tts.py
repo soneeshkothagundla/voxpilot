@@ -32,7 +32,9 @@ class Feedback:
 
     def __init__(self, cfg: FeedbackConfig) -> None:
         self.cfg = cfg
-        self._queue: queue.Queue[str | None] = queue.Queue()
+        # Items are either a str to speak, a (str, Event) pair for blocking
+        # speech (the worker sets the Event when done), or the _STOP sentinel.
+        self._queue: queue.Queue[object] = queue.Queue()
         self._worker: threading.Thread | None = None
         self._tts_ok: bool = False
         #: Optional sinks so a GUI (tray/overlay) can mirror feedback. Set by the
@@ -67,14 +69,18 @@ class Feedback:
             return
 
         while True:
-            text = self._queue.get()
-            if text is _STOP:
+            item = self._queue.get()
+            if item is _STOP:
                 break
+            text, done = item if isinstance(item, tuple) else (item, None)
             try:
                 engine.say(text)
                 engine.runAndWait()
             except Exception:  # noqa: BLE001 - one bad utterance must not kill TTS
                 self._tts_ok = False
+            finally:
+                if done is not None:
+                    done.set()  # release a say_sync() waiter
 
         try:
             engine.stop()
@@ -85,10 +91,13 @@ class Feedback:
         """Consume queued items until the stop sentinel (used when TTS dies)."""
         while True:
             try:
-                if self._queue.get() is _STOP:
-                    return
+                item = self._queue.get()
             except Exception:  # noqa: BLE001
                 return
+            if item is _STOP:
+                return
+            if isinstance(item, tuple) and item[1] is not None:
+                item[1].set()  # never leave a say_sync() waiter hanging
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -112,6 +121,33 @@ class Feedback:
                 self._queue.put(text)
             except Exception:  # noqa: BLE001
                 pass
+
+    def say_sync(self, text: str, timeout: float = 12.0) -> None:
+        """Speak and BLOCK until the utterance finishes (used for wake greetings).
+
+        Falls back to a plain print when TTS is unavailable so callers never hang.
+
+        Args:
+            text: The message to speak.
+            timeout: Max seconds to wait for speech to finish before returning.
+        """
+        if not text:
+            return
+        if self.cfg.verbose:
+            print(f"VoxPilot: {text}")
+        if self.message_sink is not None:
+            try:
+                self.message_sink(text)
+            except Exception:  # noqa: BLE001
+                pass
+        if not (self.cfg.tts and self._tts_ok and self._worker is not None):
+            return
+        done = threading.Event()
+        try:
+            self._queue.put((text, done))
+        except Exception:  # noqa: BLE001
+            return
+        done.wait(timeout)
 
     def status(self, state: str) -> None:
         """Print a one-line status indicator when verbose.

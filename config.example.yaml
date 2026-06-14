@@ -113,3 +113,7 @@ feedback:
 
   # Print status/confirmations to the terminal.
   verbose: true
+
+  # Spoken once when the wake word fires in --jarvis mode, before it listens for
+  # your command. Set to "" to disable the greeting.
+  wake_greeting: "I'm ready to change the world with you"

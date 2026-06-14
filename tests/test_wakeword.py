@@ -86,6 +86,36 @@ def test_wake_then_speech_dispatches_command() -> None:
     assert audio.size > 0
 
 
+def test_drain_after_wake_discards_pending_audio() -> None:
+    """With drain_after_wake, audio queued at wake time (e.g. a greeting) is dropped."""
+    captured: list[np.ndarray] = []
+
+    wl = WakeWordListener(
+        HotkeyConfig(),
+        lambda audio: captured.append(audio),
+        drain_after_wake=True,
+    )
+    wl._model = _FakeModel()
+
+    # All frames are already queued when the wake fires, so the post-wake drain
+    # clears the "command" frames; nothing should be captured or dispatched.
+    wl._queue.put(_silent())  # frame 1 -> wake
+    for _ in range(5):
+        wl._queue.put(_loud())
+    for _ in range(11):
+        wl._queue.put(_silent())
+
+    worker = threading.Thread(target=wl._run_worker, daemon=True)
+    worker.start()
+    try:
+        threading.Event().wait(0.6)
+    finally:
+        wl._stop.set()
+        worker.join(timeout=1.0)
+
+    assert captured == []
+
+
 def test_wake_with_no_speech_does_not_dispatch() -> None:
     """Hearing the wake word but no command must not dispatch an utterance."""
     captured: list[np.ndarray] = []

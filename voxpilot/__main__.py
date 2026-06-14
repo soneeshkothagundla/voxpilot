@@ -385,8 +385,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.jarvis:
         from voxpilot.audio import WakeWordListener
 
+        def on_wake() -> None:
+            """Speak the greeting (blocking) so it isn't captured as the command."""
+            feedback.say_sync(cfg.feedback.wake_greeting)
+
         recorder = None
-        listener = WakeWordListener(cfg.hotkey, on_utterance)
+        listener = WakeWordListener(
+            cfg.hotkey,
+            on_utterance,
+            on_wake=on_wake,
+            drain_after_wake=bool(cfg.feedback.wake_greeting),
+        )
         try:
             feedback.status("THINKING")
             listener.warm_up()
@@ -488,14 +497,21 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) ->
         feedback.status("IDLE")
 
     if args.jarvis:
+
+        def on_wake() -> None:
+            """Show the overlay and speak the greeting (blocking) before listening."""
+            overlay.show_listening()
+            feedback.say_sync(cfg.feedback.wake_greeting)
+
         recorder = None
         listener = WakeWordListener(
             cfg.hotkey,
             on_utterance,
-            on_wake=overlay.show_listening,
+            on_wake=on_wake,
             on_listen_start=overlay.show_listening,
             on_level=overlay.update_level,
             on_listen_stop=overlay.show_working,
+            drain_after_wake=bool(cfg.feedback.wake_greeting),
         )
 
         def warm_up() -> None:

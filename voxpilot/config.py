@@ -103,6 +103,9 @@ class FeedbackConfig:
     tts_rate: int = 180
     tts_volume: float = 1.0
     verbose: bool = True
+    # Spoken once when the wake word fires in --jarvis mode (before it listens
+    # for your command). Set to "" to disable the greeting.
+    wake_greeting: str = "I'm ready to change the world with you"
 
 
 @dataclass

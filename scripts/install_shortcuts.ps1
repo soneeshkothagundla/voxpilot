@@ -13,12 +13,19 @@
     Also add a shortcut to the current user's Startup folder so VoxPilot launches
     automatically at login.
 
+.PARAMETER Jarvis
+    Launch in hands-free "Hey Jarvis" wake-word mode (adds --jarvis). VoxPilot
+    listens in the background; say the wake word to activate it. Requires the
+    jarvis extra: pip install -e ".[jarvis]".
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\install_shortcuts.ps1
     powershell -ExecutionPolicy Bypass -File scripts\install_shortcuts.ps1 -Startup
+    powershell -ExecutionPolicy Bypass -File scripts\install_shortcuts.ps1 -Jarvis -Startup
 #>
 param(
-    [switch]$Startup
+    [switch]$Startup,
+    [switch]$Jarvis
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,10 +39,13 @@ if (-not (Test-Path $pythonw)) {
 
 $shell = New-Object -ComObject WScript.Shell
 
+$arguments = "-m voxpilot --windowed"
+if ($Jarvis) { $arguments += " --jarvis" }
+
 function New-VoxPilotShortcut([string]$Path) {
     $lnk = $shell.CreateShortcut($Path)
     $lnk.TargetPath = $pythonw
-    $lnk.Arguments = "-m voxpilot --windowed"
+    $lnk.Arguments = $arguments
     $lnk.WorkingDirectory = $root
     $lnk.Description = "VoxPilot - voice-controlled screen agent"
     $lnk.IconLocation = "shell32.dll,138"  # microphone-ish icon
@@ -59,4 +69,8 @@ if ($Startup) {
 
 Write-Host ""
 Write-Host "Done. Launch VoxPilot from the Start Menu or Desktop (no terminal)."
-Write-Host "Hold F9 to talk; quit from the tray icon or press Ctrl+Alt+Q."
+if ($Jarvis) {
+    Write-Host "Hands-free mode: say 'Hey Jarvis', then your command."
+} else {
+    Write-Host "Hold F9 to talk; quit from the tray icon or press Ctrl+Alt+Q."
+}

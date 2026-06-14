@@ -53,6 +53,7 @@ class WakeWordListener:
         max_command_s: float = 15.0,
         no_speech_s: float = 3.0,
         speech_level: float = 0.02,
+        drain_after_wake: bool = False,
     ) -> None:
         """Initialize the wake-word listener.
 
@@ -68,6 +69,9 @@ class WakeWordListener:
             max_command_s: Hard cap on a single command's length.
             no_speech_s: Abort capture if no speech is heard within this window.
             speech_level: Mic level above which a frame counts as voiced.
+            drain_after_wake: Discard queued audio right after the wake word
+                fires, before command capture. Use this when ``on_wake`` speaks a
+                greeting so the spoken reply is not captured as the command.
         """
         self.hotkey = hotkey
         self.on_utterance = on_utterance
@@ -82,6 +86,7 @@ class WakeWordListener:
         self._max_frames = max(1, int(max_command_s / _FRAME_SECONDS))
         self._no_speech_frames = max(1, int(no_speech_s / _FRAME_SECONDS))
         self._speech_level = speech_level
+        self._drain_after_wake = drain_after_wake
 
         self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=256)
         self._stream: sd.InputStream | None = None
@@ -245,6 +250,10 @@ class WakeWordListener:
                     voiced_frames = 0
                     self._fire(self.on_wake)
                     self._fire(self.on_listen_start)
+                    if self._drain_after_wake:
+                        # Drop audio captured during the (blocking) greeting so
+                        # the spoken reply is not recorded as the command.
+                        self._drain_queue()
                 continue
 
             # --- command capture (energy-based endpointing) ---
