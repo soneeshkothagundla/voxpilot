@@ -21,6 +21,11 @@ speaking them.
 
 ## 1. Install Docker Desktop (one time)
 
+**Shortcut:** right-click `scripts\install_docker.ps1` -> *Run with PowerShell* (approve
+the admin prompt) to do this whole section automatically, then jump to the restart.
+
+Manual route:
+
 1. Download Docker Desktop for Windows: https://www.docker.com/products/docker-desktop/
 2. Run the installer and keep **"Use WSL 2 instead of Hyper-V"** checked (this is
    the default and works on Windows 11 Home). It will install WSL 2 if needed.
