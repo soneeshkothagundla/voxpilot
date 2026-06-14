@@ -236,6 +236,19 @@ never sees it in its own screenshots. The tray icon also reflects state
 (idle / listening / thinking / acting). **Quit** from the tray menu or with
 **Ctrl+Alt+Q**. In this mode output is written to `~/.voxpilot/logs/voxpilot.log`.
 
+#### "Under Control" screen-edge glow + cursor indicators
+
+Whenever the agent is engaged, a **Comet-style aurora frame breathes around the
+edges of your whole screen** so you (and anyone watching) can see at a glance that
+the computer is under AI control — and in which mode: **cyan** while listening
+(it pulses with your voice), **violet** while thinking, **saturated indigo** while
+acting. While it acts, the real cursor gets a **glowing halo with a comet trail**,
+every **click emits a colored ripple**, and **typing pulses** the halo — so its
+mouse and keyboard actions are always visible instead of a cursor moving on its
+own. The whole frame is **full-screen, click-through** (it never blocks your or the
+agent's input) and **excluded from screen capture** (the agent never sees it). Turn
+it off via `feedback.edge_glow` / `feedback.cursor_indicators` in `config.yaml`.
+
 To launch it from the Start Menu / Desktop (or at login) with no terminal, run
 the installer once:
 

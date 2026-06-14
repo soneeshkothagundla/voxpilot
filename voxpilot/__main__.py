@@ -447,7 +447,7 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) ->
 
     from voxpilot.audio import HotkeyController, PushToTalkRecorder, WakeWordListener
     from voxpilot.stt import create_stt
-    from voxpilot.ui import Overlay, TrayIcon
+    from voxpilot.ui import EdgeGlow, Overlay, TrayIcon
 
     # There is no terminal to answer a confirmation prompt in windowed mode.
     cfg.safety.confirm_destructive = False
@@ -456,16 +456,44 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) ->
     overlay = Overlay()
     tray = TrayIcon(on_quit=overlay.stop)
 
+    # Screen-edge "Under Control" aurora glow + cursor/click/typing indicators.
+    edge = EdgeGlow() if cfg.feedback.edge_glow else None
+    if edge is not None and cfg.feedback.cursor_indicators:
+        executor.on_click = edge.click_ripple
+        executor.on_type = edge.set_typing
+
     def on_status(state: str) -> None:
-        """Mirror agent status onto the tray icon and the on-screen overlay."""
+        """Mirror agent status onto the tray icon, overlay, and edge glow."""
         s = state.lower()
         tray.set_state(s)
         if s in ("thinking", "acting"):
             overlay.show_working()
+            if edge is not None:
+                edge.set_state(s)
         elif s in ("idle", "done"):
             overlay.hide()
+            if edge is not None:
+                edge.hide()
 
     feedback.status_sink = on_status
+
+    def on_listen_start() -> None:
+        """Drive both the capsule and the edge glow into the listening state."""
+        overlay.show_listening()
+        if edge is not None:
+            edge.set_state("listening")
+
+    def on_listen_stop() -> None:
+        """Bridge from listening to thinking on both surfaces."""
+        overlay.show_working()
+        if edge is not None:
+            edge.set_state("thinking")
+
+    def on_level(level: float) -> None:
+        """Feed the live mic level to the capsule waveform and the edge breathe."""
+        overlay.update_level(level)
+        if edge is not None:
+            edge.set_level(level)
 
     stt = create_stt(cfg.stt, cfg.secrets)
 
@@ -499,8 +527,8 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) ->
     if args.jarvis:
 
         def on_wake() -> None:
-            """Show the overlay and speak the greeting (blocking) before listening."""
-            overlay.show_listening()
+            """Light up listening and speak the greeting (blocking) before listening."""
+            on_listen_start()
             feedback.say_sync(cfg.feedback.wake_greeting)
 
         recorder = None
@@ -508,9 +536,9 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) ->
             cfg.hotkey,
             on_utterance,
             on_wake=on_wake,
-            on_listen_start=overlay.show_listening,
-            on_level=overlay.update_level,
-            on_listen_stop=overlay.show_working,
+            on_listen_start=on_listen_start,
+            on_level=on_level,
+            on_listen_stop=on_listen_stop,
             drain_after_wake=bool(cfg.feedback.wake_greeting),
         )
 
@@ -528,14 +556,16 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) ->
             recorder,
             on_utterance,
             show_meter=False,
-            on_listen_start=overlay.show_listening,
-            on_level=overlay.update_level,
-            on_listen_stop=overlay.show_working,
+            on_listen_start=on_listen_start,
+            on_level=on_level,
+            on_listen_stop=on_listen_stop,
         )
         warm_up = stt_warm_up
 
     quit_hotkey = kb.GlobalHotKeys({"<ctrl>+<alt>+q": overlay.stop})
 
+    if edge is not None:
+        edge.start()
     tray.start()
     guard.start_kill_switch(cfg.hotkey)
     threading.Thread(target=warm_up, name="voxpilot-warmup", daemon=True).start()
@@ -558,6 +588,8 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) ->
         guard.stop_kill_switch()
         if recorder is not None:
             recorder.close()
+        if edge is not None:
+            edge.stop()
         tray.stop()
         feedback.shutdown()
     return 0

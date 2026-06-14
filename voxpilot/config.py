@@ -106,6 +106,12 @@ class FeedbackConfig:
     # Spoken once when the wake word fires in --jarvis mode (before it listens
     # for your command). Set to "" to disable the greeting.
     wake_greeting: str = "I'm ready to change the world with you"
+    # Comet-style screen-edge "Under Control" aurora glow while the agent is
+    # engaged (windowed mode only). Click-through and excluded from screenshots.
+    edge_glow: bool = True
+    # Cursor halo + comet trail + click ripples + typing pulse while the agent
+    # acts, so its mouse/keyboard actions are visible. Requires edge_glow.
+    cursor_indicators: bool = True
 
 
 @dataclass

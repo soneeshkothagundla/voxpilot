@@ -117,3 +117,14 @@ feedback:
   # Spoken once when the wake word fires in --jarvis mode, before it listens for
   # your command. Set to "" to disable the greeting.
   wake_greeting: "I'm ready to change the world with you"
+
+  # Screen-edge "Under Control" aurora glow while the agent is engaged (windowed
+  # mode only): a soft, breathing color frame around all screen edges that signals
+  # the computer is under AI control and in which mode (listening/thinking/acting).
+  # Click-through and excluded from the agent's own screenshots.
+  edge_glow: true
+
+  # Cursor halo + comet trail + click ripples + a typing pulse while the agent
+  # acts, so its mouse/keyboard actions are visible instead of a cursor moving on
+  # its own. Requires edge_glow.
+  cursor_indicators: true

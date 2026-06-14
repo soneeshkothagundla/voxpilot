@@ -143,6 +143,27 @@ class ActionExecutor:
         self.type_chunk = type_chunk
         self.move_duration = move_duration
         self.dry_run = guard.dry_run
+        #: Optional visual hooks (set by the windowed UI) so the on-screen "Under
+        #: Control" indicator can show click ripples and a typing pulse. Both are
+        #: best-effort and must never raise into the action path.
+        self.on_click: Any = None  # callable(native_x, native_y, button)
+        self.on_type: Any = None  # callable(active: bool)
+
+    def _emit_click(self, x: int, y: int, button: str) -> None:
+        """Fire the click visual hook, swallowing any error."""
+        if self.on_click is not None:
+            try:
+                self.on_click(x, y, button)
+            except Exception:  # noqa: BLE001 - a UI hook must never break actions
+                pass
+
+    def _emit_type(self, active: bool) -> None:
+        """Fire the typing visual hook, swallowing any error."""
+        if self.on_type is not None:
+            try:
+                self.on_type(active)
+            except Exception:  # noqa: BLE001
+                pass
 
     def execute(self, action_input: dict, scale: ScaleResult) -> ActionResult:
         """Dispatch and execute a single computer-use action.
@@ -272,6 +293,8 @@ class ActionExecutor:
         modifier_text: str | None,
     ) -> None:
         """Click at ``(x, y)`` optionally holding a translated modifier key."""
+        # Show a ripple at the click point as it happens (best-effort UI hook).
+        self._emit_click(x, y, button)
         if not modifier_text:
             pyautogui.click(x, y, clicks=clicks, interval=0.05, button=button)
             return
@@ -370,9 +393,13 @@ class ActionExecutor:
     def _act_type(self, action_input: dict, scale: ScaleResult) -> None:
         """Type text, chunked to keep each ``write`` call bounded in size."""
         text = action_input.get("text", "")
-        for i in range(0, len(text), self.type_chunk):
-            chunk = text[i : i + self.type_chunk]
-            pyautogui.write(chunk, interval=self.type_interval)
+        self._emit_type(True)
+        try:
+            for i in range(0, len(text), self.type_chunk):
+                chunk = text[i : i + self.type_chunk]
+                pyautogui.write(chunk, interval=self.type_interval)
+        finally:
+            self._emit_type(False)
 
     def _act_scroll(self, action_input: dict, scale: ScaleResult) -> None:
         """Scroll vertically or horizontally at the given coordinate."""
