@@ -59,6 +59,10 @@ e2e = [
 serve = [
     "flask>=3.0",
 ]
+jarvis = [
+    "openwakeword>=0.6",
+    "onnxruntime>=1.17",
+]
 
 [project.urls]
 Homepage = "https://github.com/soneeshkothagundla/voxpilot"

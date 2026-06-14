@@ -74,6 +74,9 @@ class HotkeyConfig:
     kill_key: str = "esc"
     kill_press_count: int = 3
     kill_press_window_s: float = 1.0
+    # Wake-word ("Hey Jarvis") settings, used in --jarvis hands-free mode.
+    wake_word: str = "hey_jarvis"
+    wake_threshold: float = 0.5
 
 
 @dataclass
@@ -82,6 +85,11 @@ class SafetyConfig:
 
     dry_run: bool = False
     confirm_destructive: bool = False
+    # Autonomy level: "supervised" (confirm risky actions), "semi" (auto reversible,
+    # confirm risky), or "full" (auto everything EXCEPT the non-bypassable
+    # catastrophic floor: money / irreversible deletes / credentials, which always
+    # require a human yes).
+    autonomy: str = "supervised"
     confirmation_mode: str = "onscreen"
     failsafe_corner: bool = True
     action_log: bool = True
@@ -328,6 +336,11 @@ class Config:
                 f"safety.confirmation_mode must be 'spoken', 'onscreen', or "
                 f"'both', got {self.safety.confirmation_mode!r}. Set it in "
                 f"config.yaml under safety.confirmation_mode."
+            )
+        if self.safety.autonomy not in {"supervised", "semi", "full"}:
+            raise ConfigError(
+                f"safety.autonomy must be 'supervised', 'semi', or 'full', got "
+                f"{self.safety.autonomy!r}. Set it in config.yaml under safety.autonomy."
             )
 
     def resolved_model(self, use_opus: bool = False) -> str:

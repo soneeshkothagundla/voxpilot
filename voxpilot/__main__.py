@@ -105,6 +105,19 @@ def build_parser() -> argparse.ArgumentParser:
         "(launch with pythonw.exe to hide the console entirely).",
     )
     parser.add_argument(
+        "--jarvis",
+        action="store_true",
+        help="Jarvis mode: hands-free wake word ('Hey Jarvis') instead of "
+        "push-to-talk. Say the wake word, then speak your command.",
+    )
+    parser.add_argument(
+        "--autonomy",
+        choices=["supervised", "semi", "full"],
+        default=None,
+        help="Autonomy level: 'supervised' (confirm risky), 'semi', or 'full' "
+        "(auto everything except the non-bypassable catastrophic floor).",
+    )
+    parser.add_argument(
         "--serve",
         action="store_true",
         help="Headless web command UI (for Docker/VM): drive + watch in a browser.",
@@ -119,13 +132,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def build_banner(cfg: Config, use_opus: bool, once_mode: bool) -> str:
+def build_banner(cfg: Config, use_opus: bool, once_mode: bool, jarvis: bool = False) -> str:
     """Build the multi-line startup banner.
 
     Args:
         cfg: The fully loaded configuration.
         use_opus: Whether the Opus model was selected.
         once_mode: Whether VoxPilot is running a single ``--once`` instruction.
+        jarvis: Whether hands-free wake-word ("Hey Jarvis") mode is active.
 
     Returns:
         A human-readable, multi-line banner string.
@@ -134,7 +148,16 @@ def build_banner(cfg: Config, use_opus: bool, once_mode: bool) -> str:
     safety_mode = "DRY-RUN" if cfg.safety.dry_run else "LIVE"
     confirm = "on" if cfg.safety.confirm_destructive else "off"
     failsafe = "on" if cfg.safety.failsafe_corner else "off"
-    run_mode = "once (single instruction)" if once_mode else "interactive (push-to-talk)"
+    if once_mode:
+        run_mode = "once (single instruction)"
+    elif jarvis:
+        run_mode = "jarvis (wake word, hands-free)"
+    else:
+        run_mode = "interactive (push-to-talk)"
+    if jarvis:
+        trigger = f"  Wake word    : say '{cfg.hotkey.wake_word}' (hands-free)"
+    else:
+        trigger = f"  Hotkey       : hold '{cfg.hotkey.ptt_key}'  [{cfg.hotkey.mode}]"
 
     lines = [
         "=" * 64,
@@ -143,12 +166,10 @@ def build_banner(cfg: Config, use_opus: bool, once_mode: bool) -> str:
         f"  Provider     : {cfg.agent.provider}",
         f"  Model        : {model}",
         f"  STT backend  : {cfg.stt.backend} ({cfg.stt.model})",
-        f"  Hotkey       : hold '{cfg.hotkey.ptt_key}'  [{cfg.hotkey.mode}]",
-        (
-            f"  Kill switch  : press '{cfg.hotkey.kill_key}' "
-            f"x{cfg.hotkey.kill_press_count} to abort"
-        ),
+        trigger,
+        (f"  Kill switch  : press '{cfg.hotkey.kill_key}' x{cfg.hotkey.kill_press_count} to abort"),
         f"  Safety       : {safety_mode}  (confirm={confirm}, failsafe={failsafe})",
+        f"  Autonomy     : {cfg.safety.autonomy}  (catastrophic actions always need a human yes)",
         f"  Platform     : {platform.system()} ({platform.platform()})",
         f"  Run mode     : {run_mode}",
         "-" * 64,
@@ -194,6 +215,8 @@ def _apply_overrides(cfg: Config, args: argparse.Namespace) -> None:
         cfg.feedback.tts = False
     if args.no_confirm:
         cfg.safety.confirm_destructive = False
+    if args.autonomy:
+        cfg.safety.autonomy = args.autonomy
     if args.max_iter is not None:
         cfg.agent.max_iterations = args.max_iter
     if args.quiet:
@@ -267,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = Config.load(args.config)
     _apply_overrides(cfg, args)
 
-    print(build_banner(cfg, args.opus, once_mode=args.once is not None))
+    print(build_banner(cfg, args.opus, once_mode=args.once is not None, jarvis=args.jarvis))
     print_macos_permissions()
 
     try:
@@ -330,7 +353,6 @@ def main(argv: list[str] | None = None) -> int:
     # Interactive push-to-talk mode.
     # ------------------------------------------------------------------ #
     feedback.say("Loading speech recognition...")
-    from voxpilot.audio import HotkeyController, PushToTalkRecorder
     from voxpilot.stt import create_stt
 
     stt = create_stt(cfg.stt, cfg.secrets)
@@ -340,8 +362,6 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 - degrade gracefully on STT load issues
         print(f"Warning: failed to warm up STT backend: {exc}", file=sys.stderr)
     feedback.status("IDLE")
-
-    recorder = PushToTalkRecorder()
 
     def on_utterance(audio) -> None:
         """Transcribe a captured utterance and drive the agent loop."""
@@ -362,14 +382,32 @@ def main(argv: list[str] | None = None) -> int:
             feedback.say(f"Error: {exc}")
         feedback.status("IDLE")
 
-    controller = HotkeyController(
-        cfg.hotkey, recorder, on_utterance, show_meter=cfg.feedback.verbose
-    )
+    if args.jarvis:
+        from voxpilot.audio import WakeWordListener
+
+        recorder = None
+        listener = WakeWordListener(cfg.hotkey, on_utterance)
+        try:
+            feedback.status("THINKING")
+            listener.warm_up()
+        except Exception as exc:  # noqa: BLE001 - degrade gracefully if model missing
+            print(f"Warning: failed to load wake-word model: {exc}", file=sys.stderr)
+        feedback.status("IDLE")
+    else:
+        from voxpilot.audio import HotkeyController, PushToTalkRecorder
+
+        recorder = PushToTalkRecorder()
+        listener = HotkeyController(
+            cfg.hotkey, recorder, on_utterance, show_meter=cfg.feedback.verbose
+        )
 
     guard.start_kill_switch(cfg.hotkey)
-    controller.start()
+    listener.start()
     feedback.status("IDLE")
-    print(f"\nHold '{cfg.hotkey.ptt_key}' to talk. Ctrl+C to quit.\n")
+    if args.jarvis:
+        print(f"\nSay '{cfg.hotkey.wake_word}', then speak your command. Ctrl+C to quit.\n")
+    else:
+        print(f"\nHold '{cfg.hotkey.ptt_key}' to talk. Ctrl+C to quit.\n")
 
     try:
         import time
@@ -379,9 +417,10 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
-        controller.stop()
+        listener.stop()
         guard.stop_kill_switch()
-        recorder.close()
+        if recorder is not None:
+            recorder.close()
         feedback.shutdown()
     return 0
 
@@ -397,7 +436,7 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) ->
 
     from pynput import keyboard as kb
 
-    from voxpilot.audio import HotkeyController, PushToTalkRecorder
+    from voxpilot.audio import HotkeyController, PushToTalkRecorder, WakeWordListener
     from voxpilot.stt import create_stt
     from voxpilot.ui import Overlay, TrayIcon
 
@@ -440,18 +479,7 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) ->
             feedback.say(f"Error: {exc}")
         feedback.status("IDLE")
 
-    recorder = PushToTalkRecorder()
-    controller = HotkeyController(
-        cfg.hotkey,
-        recorder,
-        on_utterance,
-        show_meter=False,
-        on_listen_start=overlay.show_listening,
-        on_level=overlay.update_level,
-        on_listen_stop=overlay.show_working,
-    )
-
-    def warm_up() -> None:
+    def stt_warm_up() -> None:
         try:
             feedback.status("THINKING")
             stt.warm_up()
@@ -459,26 +487,61 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) ->
             feedback.say(f"STT warm-up failed: {exc}")
         feedback.status("IDLE")
 
+    if args.jarvis:
+        recorder = None
+        listener = WakeWordListener(
+            cfg.hotkey,
+            on_utterance,
+            on_wake=overlay.show_listening,
+            on_listen_start=overlay.show_listening,
+            on_level=overlay.update_level,
+            on_listen_stop=overlay.show_working,
+        )
+
+        def warm_up() -> None:
+            stt_warm_up()
+            try:
+                listener.warm_up()
+            except Exception as exc:  # noqa: BLE001
+                feedback.say(f"Wake-word warm-up failed: {exc}")
+
+    else:
+        recorder = PushToTalkRecorder()
+        listener = HotkeyController(
+            cfg.hotkey,
+            recorder,
+            on_utterance,
+            show_meter=False,
+            on_listen_start=overlay.show_listening,
+            on_level=overlay.update_level,
+            on_listen_stop=overlay.show_working,
+        )
+        warm_up = stt_warm_up
+
     quit_hotkey = kb.GlobalHotKeys({"<ctrl>+<alt>+q": overlay.stop})
 
     tray.start()
     guard.start_kill_switch(cfg.hotkey)
     threading.Thread(target=warm_up, name="voxpilot-warmup", daemon=True).start()
-    controller.start()
+    listener.start()
     quit_hotkey.start()
-    feedback.say(f"VoxPilot ready. Hold {cfg.hotkey.ptt_key.upper()} to talk.")
+    if args.jarvis:
+        feedback.say(f"Jarvis ready. Say {cfg.hotkey.wake_word.replace('_', ' ')}.")
+    else:
+        feedback.say(f"VoxPilot ready. Hold {cfg.hotkey.ptt_key.upper()} to talk.")
     feedback.status("IDLE")
 
     try:
         overlay.run()  # blocks on the main thread until overlay.stop()
     finally:
-        controller.stop()
+        listener.stop()
         try:
             quit_hotkey.stop()
         except Exception:  # noqa: BLE001
             pass
         guard.stop_kill_switch()
-        recorder.close()
+        if recorder is not None:
+            recorder.close()
         tray.stop()
         feedback.shutdown()
     return 0

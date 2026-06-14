@@ -42,6 +42,9 @@ logs/
 scripts/_pw_test_page.html
 scripts/_overlay_*.png
 
+# Local machine config (may select full autonomy); ship config.example.yaml only.
+config.yaml
+
 # Model caches (faster-whisper / huggingface / ctranslate2)
 .cache/
 models/

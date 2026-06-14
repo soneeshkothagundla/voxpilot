@@ -37,11 +37,13 @@ def _make_guard(
     *,
     dry_run: bool = False,
     confirm_destructive: bool = False,
+    autonomy: str = "supervised",
 ) -> SafetyGuard:
     """Build a :class:`SafetyGuard` with the action log disabled."""
     cfg = SafetyConfig(
         dry_run=dry_run,
         confirm_destructive=confirm_destructive,
+        autonomy=autonomy,
         confirmation_mode="onscreen",
         failsafe_corner=True,
         action_log=False,
@@ -169,3 +171,52 @@ def test_destructive_confirm_denied_skips(
     # The Enter key is destructive; with confirmation denied it must be skipped.
     assert _find_call(patched_pyautogui, "press") is None
     assert result.output is not None
+
+
+def test_full_auto_skips_confirmation_for_risky(
+    patched_pyautogui, dummy_scale, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under 'full' autonomy a risky-but-reversible action runs without confirming."""
+    guard = _make_guard(tmp_path, confirm_destructive=True, autonomy="full")
+
+    def _boom(description: str) -> bool:
+        raise AssertionError("confirm() must not be called for risky actions in full auto")
+
+    monkeypatch.setattr(guard, "confirm", _boom)
+    ex = _executor(tmp_path, dummy_scale, guard)
+    ex.execute({"action": "key", "text": "Return"}, dummy_scale)
+    press = _find_call(patched_pyautogui, "press")
+    assert press is not None
+    assert press[1][0] == "enter"
+
+
+def test_catastrophic_always_confirms_even_in_full_auto(
+    patched_pyautogui, dummy_scale, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Catastrophic actions are gated even in full auto; a denial skips them."""
+    guard = _make_guard(tmp_path, confirm_destructive=False, autonomy="full")
+    calls: list[str] = []
+
+    def _deny(description: str) -> bool:
+        calls.append(description)
+        return False
+
+    monkeypatch.setattr(guard, "confirm", _deny)
+    ex = _executor(tmp_path, dummy_scale, guard)
+    result = ex.execute({"action": "type", "text": "rm -rf /home/user"}, dummy_scale)
+    # Confirmation was demanded despite full auto, and the denial skipped the type.
+    assert calls, "catastrophic action must request confirmation even in full auto"
+    assert _find_call(patched_pyautogui, "write") is None
+    assert result.output is not None
+
+
+def test_catastrophic_proceeds_when_confirmed(
+    patched_pyautogui, dummy_scale, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A confirmed catastrophic action is allowed through."""
+    guard = _make_guard(tmp_path, confirm_destructive=False, autonomy="full")
+    monkeypatch.setattr(guard, "confirm", lambda description: True)
+    ex = _executor(tmp_path, dummy_scale, guard)
+    ex.execute({"action": "type", "text": "wire transfer to account"}, dummy_scale)
+    write = _find_call(patched_pyautogui, "write")
+    assert write is not None

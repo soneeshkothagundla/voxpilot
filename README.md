@@ -247,6 +247,47 @@ powershell -ExecutionPolicy Bypass -File scripts\install_shortcuts.ps1
 powershell -ExecutionPolicy Bypass -File scripts\install_shortcuts.ps1 -Startup
 ```
 
+### Jarvis mode (hands-free "Hey Jarvis")
+
+Skip the hotkey entirely: say **"Hey Jarvis,"** then your command. VoxPilot
+listens for the wake word locally with
+[openWakeWord](https://github.com/dscripka/openWakeWord) (offline, no audio
+leaves your machine), captures the command that follows it (stopping after a
+short silence), then transcribes and acts — and speaks short replies back.
+
+```bash
+# One-time: install the wake-word extra.
+pip install -e ".[jarvis]"
+
+# Hands-free in the terminal:
+python -m voxpilot --jarvis
+
+# Hands-free desktop mode (overlay + tray, no terminal):
+pythonw -m voxpilot --windowed --jarvis
+```
+
+While Jarvis listens in the background you can keep working; the overlay only
+appears once it hears the wake word. Tune `hotkey.wake_word` /
+`hotkey.wake_threshold` in `config.yaml` (raise the threshold if it triggers
+too easily).
+
+#### Autonomy
+
+`safety.autonomy` (or `--autonomy`) controls how much it does without asking:
+
+| Level | Behavior |
+|---|---|
+| `supervised` (default) | Confirms risky-but-reversible actions (needs `confirm_destructive`). |
+| `semi` | Same as supervised today; reserved for future per-skill gating. |
+| `full` | Runs reversible actions with no check-ins. |
+
+**Non-bypassable floor:** regardless of autonomy level, **catastrophic** actions —
+money/payments, irreversible destruction (`rm -rf`, `format`, `drop table`, …),
+and typing credentials/secrets — **always** require a human "yes" and can never be
+auto-approved. The kill switch and action log are always on. (In `--windowed`
+mode there's no terminal to answer a prompt, so a catastrophic action is simply
+**refused** rather than run.)
+
 ### Run it in a container (use your PC in parallel)
 
 A computer-use agent shares your one cursor/keyboard/screen, so you can't work
@@ -272,6 +313,9 @@ embedded Firefox desktop. Your host is never touched.
 | `--model STR` | Override the model id. |
 | `--no-tts` | Disable spoken feedback. |
 | `--once TEXT` | Run one instruction, then exit. |
+| `--windowed` | Desktop mode: on-screen overlay + tray, no terminal. |
+| `--jarvis` | Hands-free "Hey Jarvis" wake word instead of push-to-talk (needs `.[jarvis]`). |
+| `--autonomy {supervised,semi,full}` | How much runs without confirmation (catastrophic floor always applies). |
 | `--max-iter N` | Override the agent-loop iteration cap. |
 | `--quiet` | Reduce console output (verbose off). |
 | `-h`, `--help` | Show help. Works without any credentials or network. |

@@ -201,7 +201,16 @@ class ActionExecutor:
             return "abort"
         if self.guard.dry_run:
             return "dry"
-        if self.guard.is_destructive(action_input) and self.guard.confirm_enabled:
+        # Catastrophic actions (money / irreversible / credentials) ALWAYS confirm,
+        # even under full autonomy. Non-bypassable safety floor.
+        if self.guard.is_catastrophic(action_input):
+            return "proceed" if self.guard.confirm(description) else "skip"
+        # Risky-but-reversible actions: gated unless autonomy is "full".
+        if (
+            self.guard.is_destructive(action_input)
+            and self.guard.confirm_enabled
+            and not self.guard.full_auto
+        ):
             return "proceed" if self.guard.confirm(description) else "skip"
         return "proceed"
 

@@ -74,6 +74,11 @@ hotkey:
   kill_press_count: 3
   kill_press_window_s: 1.0
 
+  # Jarvis mode (run with --jarvis): hands-free wake word instead of a hotkey.
+  # Requires the optional deps: pip install ".[jarvis]"
+  wake_word: hey_jarvis     # openWakeWord model name
+  wake_threshold: 0.5       # 0-1; raise to reduce false triggers
+
 safety:
   # Dry-run: log actions but DO NOT execute them on the real mouse/keyboard.
   dry_run: false
@@ -81,6 +86,15 @@ safety:
   # Require confirmation before risky actions (typing into shells, anything
   # that looks like Send/Delete/Submit, etc.).
   confirm_destructive: false
+
+  # Autonomy level:
+  #   supervised - confirm risky-but-reversible actions (needs confirm_destructive)
+  #   semi       - same as supervised for now (reserved for future skill gating)
+  #   full       - auto-run everything EXCEPT the non-bypassable catastrophic floor
+  # Regardless of this setting, catastrophic actions (money/payments, irreversible
+  # destruction like rm -rf / format / drop table, and typing credentials/secrets)
+  # ALWAYS require a human "yes" and can never be auto-approved.
+  autonomy: supervised
 
   # How to confirm: "spoken" (say yes), "onscreen" (terminal prompt), "both".
   confirmation_mode: onscreen

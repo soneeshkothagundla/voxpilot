@@ -59,6 +59,48 @@ _RISKY_TYPE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     )
 )
 
+#: Catastrophic ``type`` patterns that ALWAYS require confirmation, regardless of
+#: autonomy level (the non-bypassable floor): money/payments, irreversible
+#: destruction, and credential/secret exposure.
+_CATASTROPHIC_TYPE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        # money / payments
+        r"\bvenmo\b",
+        r"\bpaypal\b",
+        r"\bzelle\b",
+        r"wire\s+transfer",
+        r"\bcheckout\b",
+        r"place\s+order",
+        r"buy\s+now",
+        r"\bpurchase\b",
+        r"credit\s*card",
+        r"\bcvv\b",
+        r"routing\s+number",
+        r"bank\s+account",
+        # irreversible destruction
+        r"rm\s+-rf",
+        r"\bmkfs\b",
+        r"format\s+[a-z]:",
+        r"drop\s+table",
+        r"del\s+/[sfq]",
+        r"rmdir\s+/s",
+        r"\bdiskpart\b",
+        r"\bshutdown\b",
+        r"reg\s+delete",
+        # credentials / secrets
+        r"\bpassword\b",
+        r"\bpasswd\b",
+        r"\bsecret\b",
+        r"private\s+key",
+        r"\.pem\b",
+        r"ssh-rsa",
+        r"seed\s+phrase",
+        r"\bmnemonic\b",
+        r"api[_\s-]?key",
+    )
+)
+
 # --------------------------------------------------------------------------- #
 # Tiny key resolver (duplicated to avoid a circular import with audio.recorder)
 # --------------------------------------------------------------------------- #
@@ -117,6 +159,11 @@ class SafetyGuard:
 
         self.dry_run: bool = safety.dry_run
         self.confirm_enabled: bool = safety.confirm_destructive
+        #: Autonomy level ("supervised" | "semi" | "full"). Full auto skips the
+        #: confirmation gate for risky-but-reversible actions, but NEVER for
+        #: catastrophic ones (see :meth:`is_catastrophic`).
+        self.autonomy: str = getattr(safety, "autonomy", "supervised")
+        self.full_auto: bool = self.autonomy == "full"
 
         self._abort = threading.Event()
 
@@ -206,6 +253,24 @@ class SafetyGuard:
             return any(p.search(text) for p in _RISKY_TYPE_PATTERNS)
 
         return False
+
+    def is_catastrophic(self, action_input: dict) -> bool:
+        """Return ``True`` for actions that ALWAYS require human confirmation.
+
+        These are the non-bypassable floor even under ``full`` autonomy: typing
+        anything that looks like money/payments, irreversible destruction, or
+        credential/secret exposure.
+
+        Args:
+            action_input: The computer-tool action dict.
+
+        Returns:
+            ``True`` if the action must be confirmed regardless of autonomy level.
+        """
+        if str(action_input.get("action", "")).lower() != "type":
+            return False
+        text = str(action_input.get("text", "") or "")
+        return any(p.search(text) for p in _CATASTROPHIC_TYPE_PATTERNS)
 
     # ------------------------------------------------------------------ #
     # Confirmation gate (must never raise)

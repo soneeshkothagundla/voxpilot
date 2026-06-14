@@ -70,7 +70,7 @@ class OpenAIWhisperSTT(STTBackend):
         """
         if not self.api_key:
             raise RuntimeError(
-                "OpenAI API key is required for the OpenAI STT backend " "(set OPENAI_API_KEY)."
+                "OpenAI API key is required for the OpenAI STT backend (set OPENAI_API_KEY)."
             )
 
         import httpx

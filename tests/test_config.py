@@ -108,3 +108,22 @@ def test_resolved_model_opus_vs_default(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert cfg.resolved_model(use_opus=False) == cfg.agent.model
     assert cfg.resolved_model(use_opus=True) == cfg.agent.opus_model
     assert cfg.agent.opus_model == "us.anthropic.claude-opus-4-8"
+
+
+def test_autonomy_defaults_to_supervised(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The default autonomy level is the safest one and the wake word is set."""
+    _clear_secret_env(monkeypatch)
+    cfg = Config.load(config_path=_no_config_path(tmp_path), load_env=False)
+    assert cfg.safety.autonomy == "supervised"
+    assert cfg.hotkey.wake_word == "hey_jarvis"
+
+
+def test_validate_rejects_unknown_autonomy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """An unrecognized autonomy level fails validation."""
+    _clear_secret_env(monkeypatch)
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "tok-abc")
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text("safety:\n  autonomy: yolo\n", encoding="utf-8")
+    cfg = Config.load(config_path=yaml_path, load_env=False)
+    with pytest.raises(ConfigError):
+        cfg.validate()
