@@ -35,6 +35,28 @@ tool on **AWS Bedrock**, executes the mouse/keyboard actions Claude returns on y
 
 ---
 
+## ⬇️ Quick Start (Windows — no terminal experience needed)
+
+You need a **Claude API key** (easiest: get one at
+[console.anthropic.com](https://console.anthropic.com/)) or an **AWS Bedrock**
+token. Then:
+
+1. **Download it.** On the [latest release](https://github.com/soneeshkothagundla/voxpilot/releases/latest)
+   (or the green **Code ▸ Download ZIP** button), download the ZIP and **unzip it**
+   (right-click ▸ *Extract All*).
+2. **Run the installer.** Open the unzipped folder, right-click **`install.ps1`** ▸
+   **Run with PowerShell**. If Windows blocks it, open PowerShell in the folder and run:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File install.ps1
+   ```
+   It installs Python (if needed), sets everything up, and asks for your key — no admin rights required.
+3. **Use it.** Launch **VoxPilot** from the Start Menu or Desktop, then say
+   **"Hey Jarvis"** and give it a command. Triple-tap **Esc** to stop anytime.
+
+That's it. Everything below is for tweaking, other platforms, or running from source.
+
+---
+
 ## What it looks like in use
 
 1. VoxPilot starts and sits **idle**, printing `Hold <ptt_key> to talk. Ctrl+C to quit.`
@@ -85,6 +107,10 @@ tool on **AWS Bedrock**, executes the mouse/keyboard actions Claude returns on y
 ---
 
 ## Install
+
+> **On Windows, just run `install.ps1`** (see [Quick Start](#️-quick-start-windows--no-terminal-experience-needed)) — it does
+> everything below for you. The manual steps here are for development, other
+> platforms, or running from source.
 
 ```bash
 # 1. Clone, then create and activate a virtual environment
