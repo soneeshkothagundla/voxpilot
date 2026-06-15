@@ -496,7 +496,13 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, router) 
     _TITLES = {"thinking": "Thinking…", "acting": "Working…", "listening": "Listening…"}
 
     def on_status(state: str) -> None:
-        """Mirror agent status onto the tray icon, overlay, and edge glow."""
+        """Mirror agent status onto the tray icon, overlay, and edge glow.
+
+        The screen outline (and capsule) stay up for the WHOLE request and hide
+        only on IDLE, which is emitted once the router fully returns. A nested
+        screen step emits DONE mid-task, so DONE must NOT hide — otherwise the
+        outline flickers off while the agent is still working.
+        """
         s = state.lower()
         tray.set_state(s)
         if s in ("thinking", "acting"):
@@ -504,10 +510,12 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, router) 
             if edge is not None:
                 edge.set_state(s)
                 edge.set_title(_TITLES[s])
-        elif s in ("idle", "done"):
+        elif s == "idle":
             overlay.hide()
             if edge is not None:
                 edge.hide()
+        # "done" is intermediate (a sub-step finished); keep everything visible
+        # until IDLE fires after the whole request completes.
 
     feedback.status_sink = on_status
     # Route spoken feedback (the "Heard: ..." line, narration, results) to the HUD.
