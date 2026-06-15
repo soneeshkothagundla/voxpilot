@@ -13,12 +13,12 @@ from typing import Any
 
 import pytest
 
-from voxpilot.agent.loop import AgentLoop
+from voxpilot.agent.loop import AgentLoop, _make_tool_result, _prune_history_images
 from voxpilot.config import Config, FeedbackConfig, SafetyConfig
 from voxpilot.feedback import Feedback
 from voxpilot.safety import SafetyGuard
 from voxpilot.screen import actions as actions_module
-from voxpilot.screen.actions import ActionExecutor
+from voxpilot.screen.actions import ActionExecutor, ActionResult
 from voxpilot.screen.scaling import ScaleResult
 
 
@@ -183,3 +183,47 @@ def test_agent_loop_runs_to_completion(
                     if src.get("type") == "base64" and src.get("data") == "b64":
                         found_image = True
     assert found_image, "expected a base64 image block in a tool_result"
+
+
+def _img(data: str = "x") -> dict:
+    """Build an image content block for pruning tests."""
+    return {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": data}}
+
+
+def test_prune_history_images_keeps_last_n() -> None:
+    """Pruning keeps the most recent N screenshots and stubs out the rest."""
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "go"}, _img("a")]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": [_img("b")]},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "t2", "content": [_img("c")]},
+            ],
+        },
+    ]
+    _prune_history_images(messages, keep=1)
+    assert messages[0]["content"][1]["type"] == "text"  # oldest stubbed
+    assert messages[1]["content"][0]["content"][0]["type"] == "text"  # middle stubbed
+    kept = messages[2]["content"][0]["content"][0]  # newest kept
+    assert kept["type"] == "image" and kept["source"]["data"] == "c"
+
+
+def test_prune_history_images_zero_keeps_all() -> None:
+    """keep=0 disables pruning entirely."""
+    messages = [{"role": "user", "content": [_img("a")]}]
+    _prune_history_images(messages, keep=0)
+    assert messages[0]["content"][0]["type"] == "image"
+
+
+def test_make_tool_result_uses_result_media_type() -> None:
+    """A JPEG screenshot result yields an image block with the jpeg media type."""
+    result = ActionResult(base64_image="zzz", media_type="image/jpeg", output="screenshot")
+    block = _make_tool_result(result, "tid")
+    images = [b for b in block["content"] if b.get("type") == "image"]
+    assert images and images[0]["source"]["media_type"] == "image/jpeg"

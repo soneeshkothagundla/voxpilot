@@ -39,6 +39,17 @@ agent:
   # model's thinking time, so this costs very little.
   cursor_move_duration: 0.12
 
+  # --- speed / "turbo" knobs ---
+  # Screenshot encoding sent to the model: "jpeg" (3-4x fewer image tokens, faster
+  # responses) or "png" (crisper for tiny text).
+  screenshot_format: jpeg
+  screenshot_quality: 80          # JPEG quality 1-100 (ignored for png)
+  prune_history_images: 3         # keep only the last N screenshots in history (0=off)
+  prompt_caching: true            # cache the system+tools prefix on Bedrock
+  stream: true                    # stream responses (avoids timeouts, reacts sooner)
+  click_interval: 0.04            # per-click delay (s); --turbo sets 0
+  drag_min_duration: 0.3          # minimum drag duration (s); --turbo sets 0
+
 stt:
   # Speech-to-text backend: "faster_whisper" (local, offline, default) or
   # "openai" (requires OPENAI_API_KEY and stt.openai opt-in below).

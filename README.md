@@ -329,6 +329,7 @@ embedded Firefox desktop. Your host is never touched.
 | `--windowed` | Desktop mode: on-screen overlay + tray, no terminal. |
 | `--jarvis` | Hands-free "Hey Jarvis" wake word instead of push-to-talk (needs `.[jarvis]`). |
 | `--autonomy {supervised,semi,full}` | How much runs without confirmation (catastrophic floor always applies). |
+| `--turbo` | Max speed: teleport the cursor and zero per-click/drag delays. |
 | `--max-iter N` | Override the agent-loop iteration cap. |
 | `--quiet` | Reduce console output (verbose off). |
 | `-h`, `--help` | Show help. Works without any credentials or network. |

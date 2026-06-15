@@ -82,6 +82,38 @@ def _iter_blocks(response: Any) -> list[Any]:
     return response.content
 
 
+def _prune_history_images(messages: list[dict[str, Any]], keep: int) -> None:
+    """Replace all but the most recent ``keep`` screenshots with a text stub.
+
+    Each retained screenshot is re-sent (and re-read by the model) every turn, so
+    on a long task the history balloons with stale images. This bounds it while
+    leaving the newest screenshots — the ones the model actually needs — intact.
+    Mutates ``messages`` in place. ``keep <= 0`` disables pruning.
+
+    Args:
+        messages: The running conversation (mutated in place).
+        keep: Number of most-recent screenshots to keep as real images.
+    """
+    if keep <= 0:
+        return
+    refs: list[tuple[list, int]] = []
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for i, block in enumerate(content):
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "image":
+                refs.append((content, i))
+            elif block.get("type") == "tool_result" and isinstance(block.get("content"), list):
+                for j, inner in enumerate(block["content"]):
+                    if isinstance(inner, dict) and inner.get("type") == "image":
+                        refs.append((block["content"], j))
+    for container, idx in refs[:-keep]:
+        container[idx] = {"type": "text", "text": "[earlier screenshot omitted to save context]"}
+
+
 def _make_tool_result(result: ActionResult, tool_use_id: str) -> dict[str, Any]:
     """Build a ``tool_result`` content block for a single ``tool_use``.
 
@@ -106,7 +138,7 @@ def _make_tool_result(result: ActionResult, tool_use_id: str) -> dict[str, Any]:
                 "type": "image",
                 "source": {
                     "type": "base64",
-                    "media_type": "image/png",
+                    "media_type": result.media_type or "image/png",
                     "data": result.base64_image,
                 },
             }
@@ -166,8 +198,10 @@ class AgentLoop:
             "computer via the computer tool. The current screen is shown to you "
             "as a screenshot whose pixel dimensions match the tool's "
             "display_width_px/display_height_px; return coordinates in that same "
-            "space. Take a screenshot first whenever you are unsure of the "
-            "current state. Be careful and precise: these actions affect a live "
+            "space. The current screenshot is ALREADY attached to this "
+            "conversation, so do NOT call the screenshot action as your first "
+            "step; take a screenshot only after you act and need to see the "
+            "result. Be careful and precise: these actions affect a live "
             "machine. Work step by step, verifying with screenshots as needed. "
             "When the task is complete, STOP calling tools and reply with a "
             "single-sentence confirmation of what you did. "
@@ -198,6 +232,7 @@ class AgentLoop:
 
         # Initial user message: instruction text + a fresh screenshot.
         img, current_scale = self.capture.capture_base64()
+        media_type = getattr(self.capture, "media_type", "image/png")
         messages: list[dict[str, Any]] = [
             {
                 "role": "user",
@@ -207,7 +242,7 @@ class AgentLoop:
                         "type": "image",
                         "source": {
                             "type": "base64",
-                            "media_type": "image/png",
+                            "media_type": media_type,
                             "data": img,
                         },
                     },
@@ -220,6 +255,7 @@ class AgentLoop:
                 self.feedback.say("Task aborted.")
                 return "Aborted."
 
+            _prune_history_images(messages, self.cfg.agent.prune_history_images)
             resp = self.client.create(
                 messages=messages,
                 system=self._system_prompt(),

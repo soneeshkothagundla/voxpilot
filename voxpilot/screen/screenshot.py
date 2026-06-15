@@ -28,10 +28,27 @@ class ScreenCapture:
         target_height: Maximum height, in pixels, of the downscaled screenshot.
     """
 
-    def __init__(self, target_width: int, target_height: int) -> None:
-        """Store the target downscale box dimensions."""
+    def __init__(
+        self,
+        target_width: int,
+        target_height: int,
+        image_format: str = "png",
+        quality: int = 80,
+    ) -> None:
+        """Store the target downscale box and the screenshot encoding.
+
+        Args:
+            target_width: Maximum width of the downscaled screenshot.
+            target_height: Maximum height of the downscaled screenshot.
+            image_format: ``"png"`` (crisp, larger) or ``"jpeg"`` (fewer tokens).
+            quality: JPEG quality (1-100); ignored for PNG.
+        """
         self.target_width = target_width
         self.target_height = target_height
+        self.image_format = "jpeg" if str(image_format).lower() in ("jpeg", "jpg") else "png"
+        self.quality = max(1, min(100, int(quality)))
+        #: The base64 image media type matching :attr:`image_format`.
+        self.media_type = "image/jpeg" if self.image_format == "jpeg" else "image/png"
 
     def native_size(self) -> tuple[int, int]:
         """Return the native ``(width, height)`` of the primary monitor.
@@ -100,9 +117,14 @@ class ScreenCapture:
             )
 
         buffer = io.BytesIO()
-        # compress_level=1 trades a slightly larger PNG for much faster encoding,
-        # which keeps each agent step snappy.
-        image.save(buffer, format="PNG", compress_level=1)
+        if self.image_format == "jpeg":
+            # JPEG is far smaller than PNG (fewer image tokens, faster upload and
+            # time-to-first-token); quality ~80 keeps UI text legible for the model.
+            image.save(buffer, format="JPEG", quality=self.quality, optimize=False)
+        else:
+            # compress_level=1 trades a slightly larger PNG for much faster encoding,
+            # which keeps each agent step snappy.
+            image.save(buffer, format="PNG", compress_level=1)
         return buffer.getvalue(), scale
 
     def capture_base64(self) -> tuple[str, ScaleResult]:

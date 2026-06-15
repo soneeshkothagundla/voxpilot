@@ -65,6 +65,7 @@ class ComputerUseClient:
         self.cfg = cfg
         self.model = cfg.resolved_model(use_opus)
         self.betas = [cfg.agent.beta_flag]
+        self.caching = bool(getattr(cfg.agent, "prompt_caching", False))
 
         if cfg.agent.provider == "bedrock":
             self._client: Anthropic | AnthropicBedrock = AnthropicBedrock(
@@ -74,6 +75,51 @@ class ComputerUseClient:
         else:
             self._client = Anthropic(api_key=cfg.secrets.anthropic_api_key)
 
+        # Use the streaming helper only if the active SDK/provider exposes it
+        # (the Bedrock beta namespace may not); otherwise fall back to a plain
+        # create() so the run never breaks on a missing attribute.
+        self.stream = bool(getattr(cfg.agent, "stream", False)) and hasattr(
+            self._client.beta.messages, "stream"
+        )
+
+    def _cached(self, system: str, tools: list[dict[str, Any]]) -> tuple[Any, list[dict[str, Any]]]:
+        """Return (system, tools) with a cache breakpoint on the static prefix.
+
+        The system prompt and tool spec are identical every turn, so caching them
+        (ephemeral) lets Bedrock skip re-reading them, cutting per-turn latency.
+        """
+        sys_blocks = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+        tools_c = [dict(t) for t in tools]
+        if tools_c:
+            tools_c[-1] = {**tools_c[-1], "cache_control": {"type": "ephemeral"}}
+        return sys_blocks, tools_c
+
+    def _invoke(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        system: Any,
+        tools: list[dict[str, Any]],
+        max_tokens: int,
+        on_text: Any,
+    ) -> Any:
+        """Call the beta messages endpoint, streaming when enabled."""
+        kwargs = dict(
+            model=self.model,
+            max_tokens=max_tokens,
+            system=system,
+            tools=tools,
+            messages=messages,
+            betas=self.betas,
+        )
+        if self.stream:
+            with self._client.beta.messages.stream(**kwargs) as stream:
+                if on_text is not None:
+                    for delta in stream.text_stream:
+                        on_text(delta)
+                return stream.get_final_message()
+        return self._client.beta.messages.create(**kwargs)
+
     def create(
         self,
         *,
@@ -81,24 +127,42 @@ class ComputerUseClient:
         system: str,
         tools: list[dict[str, Any]],
         max_tokens: int,
+        on_text: Any = None,
     ) -> Any:
         """Call the beta messages endpoint with the computer-use beta flag.
 
+        Streams the response when ``cfg.agent.stream`` is set (recommended:
+        avoids request timeouts on long turns and lets the UI react sooner) and
+        caches the static system+tools prefix when ``cfg.agent.prompt_caching``
+        is set. If a cached request fails, it retries once without caching so an
+        unsupported model/region degrades gracefully instead of breaking the run.
+
         Args:
             messages: The running conversation (user/assistant turns).
-            system: The system prompt (a plain string is accepted by the SDK).
+            system: The system prompt (a plain string).
             tools: The tool specs (typically a single computer-use tool).
             max_tokens: Maximum tokens to generate for this turn.
+            on_text: Optional callback invoked with streamed text deltas.
 
         Returns:
-            The SDK response object (its ``.content`` is a list of content
-            blocks).
+            The final SDK response object (its ``.content`` is a list of blocks).
         """
-        return self._client.beta.messages.create(
-            model=self.model,
-            max_tokens=max_tokens,
+        if self.caching:
+            sys_param, tools_param = self._cached(system, tools)
+            try:
+                return self._invoke(
+                    messages=messages,
+                    system=sys_param,
+                    tools=tools_param,
+                    max_tokens=max_tokens,
+                    on_text=on_text,
+                )
+            except Exception:  # noqa: BLE001 - fall back to an uncached request
+                pass
+        return self._invoke(
+            messages=messages,
             system=system,
             tools=tools,
-            messages=messages,
-            betas=self.betas,
+            max_tokens=max_tokens,
+            on_text=on_text,
         )

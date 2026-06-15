@@ -118,6 +118,12 @@ def build_parser() -> argparse.ArgumentParser:
         "(auto everything except the non-bypassable catastrophic floor).",
     )
     parser.add_argument(
+        "--turbo",
+        action="store_true",
+        help="Max speed: teleport the cursor and zero per-click/drag delays "
+        "(actions become near-instant; the edge glow still shows what it's doing).",
+    )
+    parser.add_argument(
         "--serve",
         action="store_true",
         help="Headless web command UI (for Docker/VM): drive + watch in a browser.",
@@ -217,6 +223,10 @@ def _apply_overrides(cfg: Config, args: argparse.Namespace) -> None:
         cfg.safety.confirm_destructive = False
     if args.autonomy:
         cfg.safety.autonomy = args.autonomy
+    if args.turbo:
+        cfg.agent.cursor_move_duration = 0.0
+        cfg.agent.click_interval = 0.0
+        cfg.agent.drag_min_duration = 0.0
     if args.max_iter is not None:
         cfg.agent.max_iterations = args.max_iter
     if args.quiet:
@@ -315,10 +325,21 @@ def main(argv: list[str] | None = None) -> int:
     from voxpilot.screen.screenshot import ScreenCapture
 
     feedback = Feedback(cfg.feedback)
-    capture = ScreenCapture(cfg.agent.target_width, cfg.agent.target_height)
+    capture = ScreenCapture(
+        cfg.agent.target_width,
+        cfg.agent.target_height,
+        image_format=cfg.agent.screenshot_format,
+        quality=cfg.agent.screenshot_quality,
+    )
     guard = SafetyGuard(cfg.safety, cfg.log_dir, feedback=feedback)
     client = ComputerUseClient(cfg, use_opus=args.opus)
-    executor = ActionExecutor(capture, guard, move_duration=cfg.agent.cursor_move_duration)
+    executor = ActionExecutor(
+        capture,
+        guard,
+        move_duration=cfg.agent.cursor_move_duration,
+        click_interval=cfg.agent.click_interval,
+        drag_min_duration=cfg.agent.drag_min_duration,
+    )
     loop = AgentLoop(client, capture, executor, guard, feedback, cfg)
 
     # ------------------------------------------------------------------ #

@@ -127,3 +127,48 @@ def test_validate_rejects_unknown_autonomy(monkeypatch: pytest.MonkeyPatch, tmp_
     cfg = Config.load(config_path=yaml_path, load_env=False)
     with pytest.raises(ConfigError):
         cfg.validate()
+
+
+def test_speed_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The default config ships the speed pack enabled."""
+    _clear_secret_env(monkeypatch)
+    cfg = Config.load(config_path=_no_config_path(tmp_path), load_env=False)
+    assert cfg.agent.screenshot_format == "jpeg"
+    assert cfg.agent.prompt_caching is True
+    assert cfg.agent.stream is True
+    assert cfg.agent.prune_history_images == 3
+
+
+def test_validate_rejects_unknown_screenshot_format(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An unrecognized screenshot format fails validation."""
+    _clear_secret_env(monkeypatch)
+    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "tok-abc")
+    yaml_path = tmp_path / "config.yaml"
+    yaml_path.write_text("agent:\n  screenshot_format: webp\n", encoding="utf-8")
+    cfg = Config.load(config_path=yaml_path, load_env=False)
+    with pytest.raises(ConfigError):
+        cfg.validate()
+
+
+def test_turbo_override_zeros_input_delays(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """--turbo zeros the cursor glide and per-click/drag delays."""
+    from voxpilot.__main__ import _apply_overrides, build_parser
+
+    _clear_secret_env(monkeypatch)
+    cfg = Config.load(config_path=_no_config_path(tmp_path), load_env=False)
+    args = build_parser().parse_args(["--turbo"])
+    _apply_overrides(cfg, args)
+    assert cfg.agent.cursor_move_duration == 0.0
+    assert cfg.agent.click_interval == 0.0
+    assert cfg.agent.drag_min_duration == 0.0
+
+
+def test_screen_capture_media_type() -> None:
+    """ScreenCapture reports the media type matching its encoding."""
+    from voxpilot.screen.screenshot import ScreenCapture
+
+    assert ScreenCapture(100, 100, "jpeg").media_type == "image/jpeg"
+    assert ScreenCapture(100, 100, "jpg").media_type == "image/jpeg"
+    assert ScreenCapture(100, 100, "png").media_type == "image/png"

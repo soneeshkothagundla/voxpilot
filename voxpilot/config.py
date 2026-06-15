@@ -51,6 +51,25 @@ class AgentConfig:
     # visible/followable; the model's thinking time dominates total latency, so a
     # visible glide costs little. Set 0 to teleport instantly.
     cursor_move_duration: float = 0.12
+    # --- speed / "turbo" knobs ------------------------------------------------
+    # Screenshot encoding sent to the model. "jpeg" is ~3-4x fewer image tokens
+    # (faster time-to-first-token) than "png"; "png" is crisper for tiny text.
+    screenshot_format: str = "jpeg"
+    screenshot_quality: int = 80  # JPEG quality (1-100); ignored for png
+    # Keep only the last N screenshots in the conversation history; older ones are
+    # replaced with a short text stub. Each retained screenshot is ~thousands of
+    # tokens re-read every turn, so this bounds context growth. 0 disables pruning.
+    prune_history_images: int = 3
+    # Cache the static prefix (system prompt + tool spec) on Bedrock so it is not
+    # re-billed / re-read in full every turn (lower per-turn latency).
+    prompt_caching: bool = True
+    # Stream the model response (recommended): avoids request timeouts on long
+    # turns and lets the UI react to output sooner. Falls back to non-streaming.
+    stream: bool = True
+    # Per-click interval and drag floor (seconds). --turbo zeroes these (and the
+    # cursor glide) for the fastest possible action execution.
+    click_interval: float = 0.04
+    drag_min_duration: float = 0.3
 
 
 @dataclass
@@ -350,6 +369,12 @@ class Config:
             raise ConfigError(
                 f"safety.autonomy must be 'supervised', 'semi', or 'full', got "
                 f"{self.safety.autonomy!r}. Set it in config.yaml under safety.autonomy."
+            )
+        if self.agent.screenshot_format not in {"png", "jpeg"}:
+            raise ConfigError(
+                f"agent.screenshot_format must be 'png' or 'jpeg', got "
+                f"{self.agent.screenshot_format!r}. Set it in config.yaml under "
+                f"agent.screenshot_format."
             )
 
     def resolved_model(self, use_opus: bool = False) -> str:

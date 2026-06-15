@@ -113,6 +113,7 @@ class ActionResult:
     base64_image: str | None = None
     is_error: bool = False
     scale: ScaleResult | None = None
+    media_type: str = "image/png"
 
 
 class ActionExecutor:
@@ -135,6 +136,8 @@ class ActionExecutor:
         type_interval: float = 0.0,
         type_chunk: int = 50,
         move_duration: float = 0.18,
+        click_interval: float = 0.04,
+        drag_min_duration: float = 0.3,
     ) -> None:
         """Store collaborators and typing parameters."""
         self.capture = capture
@@ -142,7 +145,12 @@ class ActionExecutor:
         self.type_interval = type_interval
         self.type_chunk = type_chunk
         self.move_duration = move_duration
+        self.click_interval = click_interval
+        self.drag_min_duration = drag_min_duration
         self.dry_run = guard.dry_run
+        #: Small cache so a redundant ``screenshot`` action within a short window
+        #: reuses the previous capture instead of grabbing the screen again.
+        self._last_shot: tuple[float, str, ScaleResult, str] | None = None
         #: Optional visual hooks (set by the windowed UI) so the on-screen "Under
         #: Control" indicator can show click ripples and a typing pulse. Both are
         #: best-effort and must never raise into the action path.
@@ -238,9 +246,24 @@ class ActionExecutor:
     # -- read-only actions ----------------------------------------------------
 
     def _do_screenshot(self) -> ActionResult:
-        """Capture a fresh screenshot and return it as a base64 image result."""
+        """Capture a screenshot as a base64 image result.
+
+        A capture taken within the last ~0.3s is reused, so a model that requests
+        two screenshots back-to-back doesn't pay to grab and encode the screen
+        twice.
+        """
+        media = getattr(self.capture, "media_type", "image/png")
+        now = time.monotonic()
+        if self._last_shot is not None and now - self._last_shot[0] < 0.3:
+            _, img, scale, media = self._last_shot
+            return ActionResult(
+                base64_image=img, scale=scale, media_type=media, output="screenshot"
+            )
         img, scale = self.capture.capture_base64()
-        return ActionResult(base64_image=img, scale=scale, output="screenshot taken")
+        self._last_shot = (now, img, scale, media)
+        return ActionResult(
+            base64_image=img, scale=scale, media_type=media, output="screenshot taken"
+        )
 
     def _do_cursor_position(self, scale: ScaleResult) -> ActionResult:
         """Report the current cursor position in model (scaled) coordinates."""
@@ -296,20 +319,20 @@ class ActionExecutor:
         # Show a ripple at the click point as it happens (best-effort UI hook).
         self._emit_click(x, y, button)
         if not modifier_text:
-            pyautogui.click(x, y, clicks=clicks, interval=0.05, button=button)
+            pyautogui.click(x, y, clicks=clicks, interval=self.click_interval, button=button)
             return
 
         mods = [_translate_key(t) for t in _parse_combo(modifier_text)]
         hold = getattr(pyautogui, "hold", None)
         if callable(hold):
             with hold(mods):
-                pyautogui.click(x, y, clicks=clicks, interval=0.05, button=button)
+                pyautogui.click(x, y, clicks=clicks, interval=self.click_interval, button=button)
             return
 
         for mod in mods:
             pyautogui.keyDown(mod)
         try:
-            pyautogui.click(x, y, clicks=clicks, interval=0.05, button=button)
+            pyautogui.click(x, y, clicks=clicks, interval=self.click_interval, button=button)
         finally:
             for mod in reversed(mods):
                 pyautogui.keyUp(mod)
@@ -352,7 +375,9 @@ class ActionExecutor:
         start = self._xy(action_input["start_coordinate"], scale)
         end = self._xy(action_input["coordinate"], scale)
         self._move(*start)
-        pyautogui.dragTo(*end, duration=max(self.move_duration, 0.3), button="left")
+        pyautogui.dragTo(
+            *end, duration=max(self.move_duration, self.drag_min_duration), button="left"
+        )
 
     def _act_left_mouse_down(self, action_input: dict, scale: ScaleResult) -> None:
         """Press the left mouse button down (optionally at a coordinate)."""
