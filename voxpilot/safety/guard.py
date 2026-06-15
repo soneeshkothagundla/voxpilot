@@ -272,6 +272,18 @@ class SafetyGuard:
         text = str(action_input.get("text", "") or "")
         return any(p.search(text) for p in _CATASTROPHIC_TYPE_PATTERNS)
 
+    def is_catastrophic_command(self, command: str) -> bool:
+        """Return ``True`` for a shell command that hits the non-bypassable floor.
+
+        The same money / irreversible-destruction / credential patterns used for
+        typed text, applied to a command line. Always confirmed, even in full auto.
+        """
+        return any(p.search(command or "") for p in _CATASTROPHIC_TYPE_PATTERNS)
+
+    def is_risky_command(self, command: str) -> bool:
+        """Return ``True`` for a risky-but-reversible shell command (gated unless full)."""
+        return any(p.search(command or "") for p in _RISKY_TYPE_PATTERNS)
+
     # ------------------------------------------------------------------ #
     # Confirmation gate (must never raise)
     # ------------------------------------------------------------------ #

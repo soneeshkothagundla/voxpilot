@@ -70,6 +70,12 @@ class AgentConfig:
     # cursor glide) for the fastest possible action execution.
     click_interval: float = 0.04
     drag_min_duration: float = 0.3
+    # --- orchestrator / router ------------------------------------------------
+    # The router picks the fastest correct path per request (answer directly, run
+    # a host command, or drive the GUI). Bound its planning steps and the time a
+    # single host command may run before it is killed.
+    router_max_steps: int = 12
+    command_timeout: float = 60.0
 
 
 @dataclass

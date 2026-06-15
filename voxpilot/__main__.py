@@ -319,6 +319,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # Heavy / pyautogui-touching imports happen AFTER ensure_dpi_awareness().
     from voxpilot.agent import AgentLoop, ComputerUseClient
+    from voxpilot.agent.router import Router
+    from voxpilot.agent.shell import ShellExecutor
     from voxpilot.feedback import Feedback
     from voxpilot.safety import SafetyGuard
     from voxpilot.screen.actions import ActionExecutor
@@ -341,12 +343,16 @@ def main(argv: list[str] | None = None) -> int:
         drag_min_duration=cfg.agent.drag_min_duration,
     )
     loop = AgentLoop(client, capture, executor, guard, feedback, cfg)
+    # The orchestrator picks the best path per request (answer / command / screen);
+    # the computer-use loop above is its on-screen executor.
+    shell = ShellExecutor(guard, timeout=cfg.agent.command_timeout)
+    router = Router(client, loop, shell, guard, feedback, cfg)
 
     # ------------------------------------------------------------------ #
     # --windowed: desktop mode (on-screen overlay + tray, no terminal needed).
     # ------------------------------------------------------------------ #
     if args.windowed:
-        return run_windowed(cfg, args, feedback, capture, guard, client, executor, loop)
+        return run_windowed(cfg, args, feedback, capture, guard, client, executor, router)
 
     # ------------------------------------------------------------------ #
     # --serve: headless web command UI (for containers/VMs; type, don't speak).
@@ -355,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
         from voxpilot import web
 
         feedback.say(f"Serving the VoxPilot web UI on port {args.port}.")
-        web.serve(cfg, loop, feedback, guard, port=args.port)
+        web.serve(cfg, router, feedback, guard, port=args.port)
         return 0
 
     # ------------------------------------------------------------------ #
@@ -364,7 +370,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.once:
         try:
             feedback.say(f"Running: {args.once}")
-            result = loop.run(args.once)
+            result = router.run(args.once)
             print(result)
         finally:
             feedback.shutdown()
@@ -398,7 +404,7 @@ def main(argv: list[str] | None = None) -> int:
             return
         feedback.say(f"Heard: {text}")
         try:
-            loop.run(text)
+            router.run(text)
         except Exception as exc:  # noqa: BLE001 - keep the listener alive
             feedback.say(f"Error: {exc}")
         feedback.status("IDLE")
@@ -455,7 +461,7 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) -> int:
+def run_windowed(cfg, args, feedback, capture, guard, client, executor, router) -> int:
     """Run VoxPilot in desktop mode: on-screen overlay + system tray, no terminal.
 
     The tkinter overlay event loop runs on this (main) thread; the global hotkey
@@ -544,7 +550,7 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) ->
             return
         feedback.say(f"Heard: {text}")
         try:
-            loop.run(text)
+            router.run(text)
         except Exception as exc:  # noqa: BLE001 - keep the listener alive
             feedback.say(f"Error: {exc}")
         feedback.status("IDLE")

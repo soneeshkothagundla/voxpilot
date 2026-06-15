@@ -213,6 +213,26 @@ python -m voxpilot --no-tts --quiet
 
 If you installed the console script, `voxpilot` works the same as `python -m voxpilot`.
 
+### How VoxPilot decides what to do (answer / command / screen)
+
+You don't tell it *how* — you tell it *what*, and an **orchestrator** picks the
+fastest correct path for each request:
+
+- **Answer directly** — a question or explanation needs no machine action, so it
+  just replies (e.g. *"what's 17 × 23?"* → "391"), instantly.
+- **Run a host command** — app launches, file/folder ops, system queries, scripts
+  and installs are done via the shell (PowerShell on Windows), which is far faster
+  and more reliable than clicking through the GUI (e.g. *"what's my hostname?"* →
+  runs a command instead of opening Settings).
+- **Control the screen** — only when the task genuinely needs the on-screen GUI of
+  a running app does it fall back to driving the mouse/keyboard (the edge glow +
+  activity HUD show this).
+
+It chains these as needed (run a command, read the output, continue), and **every
+path goes through the same safety floor** — catastrophic commands/actions (money,
+irreversible deletion, credentials) always need a human "yes", plus the kill
+switch and action log. Tunable via `agent.router_max_steps` / `agent.command_timeout`.
+
 ### Desktop mode (no terminal, on-screen overlay)
 
 For a Wispr-Flow-style experience — a floating pill that shows it's listening, a

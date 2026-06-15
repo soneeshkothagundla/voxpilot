@@ -50,6 +50,13 @@ agent:
   click_interval: 0.04            # per-click delay (s); --turbo sets 0
   drag_min_duration: 0.3          # minimum drag duration (s); --turbo sets 0
 
+  # --- orchestrator / router ---
+  # The router picks the fastest correct path per request (answer directly, run a
+  # host command, or drive the GUI). Bound its planning steps and how long a single
+  # host command may run before it is killed.
+  router_max_steps: 12
+  command_timeout: 60.0
+
 stt:
   # Speech-to-text backend: "faster_whisper" (local, offline, default) or
   # "openai" (requires OPENAI_API_KEY and stt.openai opt-in below).
