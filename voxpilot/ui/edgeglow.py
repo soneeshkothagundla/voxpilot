@@ -93,6 +93,38 @@ def _pbgra(img):
     return out
 
 
+def _load_font(size: int, bold: bool = False):
+    """Load a Windows UI font at ``size`` px, falling back to PIL's default."""
+    from PIL import ImageFont
+
+    names = (
+        ["segoeuisb.ttf", "segoeuib.ttf", "arialbd.ttf"] if bold else ["segoeui.ttf", "arial.ttf"]
+    )
+    for name in names:
+        try:
+            return ImageFont.truetype(name, size)
+        except Exception:  # noqa: BLE001 - try the next candidate
+            continue
+    try:
+        return ImageFont.load_default()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _fit_text(draw, text: str, font, max_w: float) -> str:
+    """Collapse whitespace and ellipsis-truncate ``text`` to fit ``max_w`` pixels."""
+    text = " ".join(str(text).split())
+    if font is None or not text:
+        return text[:64]
+    if draw.textlength(text, font=font) <= max_w:
+        return text
+    ell = "…"
+    n = len(text)
+    while n > 0 and draw.textlength(text[:n] + ell, font=font) > max_w:
+        n -= 1
+    return (text[:n] + ell) if n > 0 else ell
+
+
 def _stamp(buf, sprite, cx: int, cy: int) -> None:
     """Alpha-composite a premultiplied BGRA ``sprite`` centered at ``(cx, cy)``.
 
@@ -150,6 +182,15 @@ class _NoopEdgeGlow:
     def set_typing(self, on: bool) -> None:  # noqa: D102
         pass
 
+    def set_title(self, text: str) -> None:  # noqa: D102
+        pass
+
+    def push_line(self, text: str) -> None:  # noqa: D102
+        pass
+
+    def clear_lines(self) -> None:  # noqa: D102
+        pass
+
     def hide(self) -> None:  # noqa: D102
         pass
 
@@ -190,6 +231,11 @@ class _WinEdgeGlow:
         self._ripples: list[_Ripple] = []
         self._trail: deque = deque(maxlen=12)
         self._composed_state: str | None = None
+        # Activity HUD ("what it's doing" card).
+        self._title = ""
+        self._lines: deque = deque(maxlen=6)
+        self._panel = None  # cached premultiplied BGRA sprite
+        self._panel_dirty = True
 
     # -- public, thread-safe API ------------------------------------------- #
     def start(self) -> None:
@@ -214,6 +260,19 @@ class _WinEdgeGlow:
     def set_typing(self, on: bool) -> None:
         """Toggle the typing pulse on the cursor halo."""
         self._q.put(("typing", bool(on)))
+
+    def set_title(self, text: str) -> None:
+        """Set the HUD title line (e.g. 'Listening' / 'Thinking' / 'Working')."""
+        self._q.put(("title", str(text)))
+
+    def push_line(self, text: str) -> None:
+        """Append a plain-English activity line to the HUD ('Typing ...', ...)."""
+        if text:
+            self._q.put(("line", str(text)))
+
+    def clear_lines(self) -> None:
+        """Clear the HUD activity log (e.g. at the start of a new command)."""
+        self._q.put(("clear",))
 
     def hide(self) -> None:
         """Hide the glow (idle)."""
@@ -464,6 +523,16 @@ class _WinEdgeGlow:
                     )
                 elif kind == "typing":
                     self._typing = cmd[1]
+                elif kind == "title":
+                    if cmd[1] != self._title:
+                        self._title = cmd[1]
+                        self._panel_dirty = True
+                elif kind == "line":
+                    self._lines.append(cmd[1])
+                    self._panel_dirty = True
+                elif kind == "clear":
+                    self._lines.clear()
+                    self._panel_dirty = True
                 elif kind == "stop":
                     self._running = False
         except queue.Empty:
@@ -480,6 +549,9 @@ class _WinEdgeGlow:
             self._ripples.clear()
             self._trail.clear()
             self._typing = False
+            self._title = ""
+            self._lines.clear()
+            self._panel_dirty = True
             return
         self._composed_state = None  # force recompose for the new accent
         if not self._visible:
@@ -514,17 +586,21 @@ class _WinEdgeGlow:
         put((slice(b, vh - b), slice(vw - b, vw)), bands["right"])
 
     def _render(self, now: float) -> None:
-
         breath = self._breath(now)
         acting = accent_for(self._state)["cursor"]
+        has_panel = bool(self._title or self._lines)
 
-        if acting:
-            # Recompose every frame: edges (breath-baked) + cursor halo/trail + ripples.
+        if acting or has_panel:
+            # Recompose every frame: edges (breath-baked) + cursor effects + HUD card.
             self._buf.fill(0)
             self._write_bands(breath)
-            self._render_cursor(now)
-            self._render_ripples(now)
+            if acting:
+                self._render_cursor(now)
+                self._render_ripples(now)
+            if has_panel:
+                self._render_panel()
             ctypes.memmove(self._bits, self._buf.ctypes.data, self._dib_size)
+            self._composed_state = None  # invalidate the cheap-path cache
             self._blit(255)
         else:
             # Static edge frame; breathe cheaply via the blend constant-alpha so we
@@ -535,6 +611,73 @@ class _WinEdgeGlow:
                 ctypes.memmove(self._bits, self._buf.ctypes.data, self._dib_size)
                 self._composed_state = self._state
             self._blit(int(max(0, min(255, round(breath * 255)))))
+
+    def _render_panel(self) -> None:
+        """Stamp the activity HUD card (top-center). Rebuilt only when text changes."""
+        if self._panel_dirty or self._panel is None:
+            self._panel = self._build_panel()
+            self._panel_dirty = False
+        if self._panel is None:
+            return
+        ph, pw = self._panel.shape[:2]
+        cx = self._vw // 2
+        cy = int(self._band * 0.36) + ph // 2  # nestled just inside the top edge band
+        _stamp(self._buf, self._panel, cx, cy)
+
+    def _build_panel(self):
+        """Render the 'what it's doing' card to a premultiplied BGRA sprite."""
+        from PIL import Image, ImageDraw
+
+        s = self._scale
+        pad = int(16 * s)
+        title_h = int(28 * s)
+        line_h = int(24 * s)
+        gap = int(6 * s)
+        width = int(min(720 * s, self._vw * 0.62))
+        lines = list(self._lines)[-4:]
+        height = pad + title_h + (line_h * len(lines) if lines else 0) + pad
+        r, g, b = accent_for(self._state)["rgb"]
+
+        img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        radius = int(16 * s)
+        d.rounded_rectangle(
+            [0, 0, width - 1, height - 1],
+            radius=radius,
+            fill=(16, 18, 26, 210),
+            outline=(r, g, b, 200),
+            width=max(1, int(1.5 * s)),
+        )
+        title_font = _load_font(int(19 * s), bold=True)
+        body_font = _load_font(int(15 * s), bold=False)
+        max_text_w = width - 2 * pad
+
+        # State dot + title.
+        dot = int(5 * s)
+        ty = pad
+        dcy = ty + title_h // 2
+        d.ellipse([pad, dcy - dot, pad + 2 * dot, dcy + dot], fill=(r, g, b, 255))
+        tx = pad + 3 * dot + int(6 * s)
+        d.text(
+            (tx, ty),
+            _fit_text(d, self._title or "VoxPilot", title_font, max_text_w - (tx - pad)),
+            font=title_font,
+            fill=(238, 240, 247, 255),
+        )
+
+        # Most-recent activity lines (newest brightest).
+        y = pad + title_h + (gap if lines else 0)
+        for i, ln in enumerate(lines):
+            bright = 245 if i == len(lines) - 1 else 165
+            d.text(
+                (pad, y),
+                _fit_text(d, ln, body_font, max_text_w),
+                font=body_font,
+                fill=(bright, bright, bright, 255),
+            )
+            y += line_h
+
+        return _pbgra(img)
 
     def _render_cursor(self, now: float) -> None:
         pt = _POINT()

@@ -12,6 +12,8 @@ import numpy as np
 
 from voxpilot.ui.edgeglow import (
     _falloff_mask,
+    _fit_text,
+    _load_font,
     _NoopEdgeGlow,
     _pbgra_from_array,
     _Ripple,
@@ -83,5 +85,19 @@ def test_noop_edgeglow_is_safe() -> None:
     g.set_level(0.5)
     g.click_ripple(10, 20, "left")
     g.set_typing(True)
+    g.set_title("Working")
+    g.push_line("Clicking")
+    g.clear_lines()
     g.hide()
     g.stop()
+
+
+def test_fit_text_truncates_to_width() -> None:
+    """_fit_text ellipsis-truncates long text to fit and leaves short text alone."""
+    from PIL import Image, ImageDraw
+
+    draw = ImageDraw.Draw(Image.new("RGBA", (300, 40)))
+    font = _load_font(16)
+    fitted = _fit_text(draw, "x" * 500, font, 100)
+    assert draw.textlength(fitted, font=font) <= 101
+    assert _fit_text(draw, "short", font, 1000) == "short"

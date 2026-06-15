@@ -156,6 +156,7 @@ class ActionExecutor:
         #: best-effort and must never raise into the action path.
         self.on_click: Any = None  # callable(native_x, native_y, button)
         self.on_type: Any = None  # callable(active: bool)
+        self.on_action: Any = None  # callable(label: str) — HUD activity line
 
     def _emit_click(self, x: int, y: int, button: str) -> None:
         """Fire the click visual hook, swallowing any error."""
@@ -173,6 +174,47 @@ class ActionExecutor:
             except Exception:  # noqa: BLE001
                 pass
 
+    def _emit_action(self, label: str) -> None:
+        """Fire the activity-HUD hook with a plain-English label, swallowing errors."""
+        if self.on_action is not None:
+            try:
+                self.on_action(label)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _human_label(self, action_input: dict) -> str:
+        """A short, human-readable description of an action for the activity HUD."""
+        name = action_input.get("action", "")
+        if name == "type":
+            text = str(action_input.get("text", ""))
+            preview = text if len(text) <= 28 else text[:25] + "..."
+            return f'Typing "{preview}"'
+        if name == "key":
+            return f"Pressing {action_input.get('text', '')}"
+        if name == "hold_key":
+            return f"Holding {action_input.get('text', '')}"
+        if name in ("left_click", "double_click", "triple_click"):
+            return "Clicking"
+        if name == "right_click":
+            return "Right-clicking"
+        if name == "middle_click":
+            return "Middle-clicking"
+        if name in ("mouse_move", "left_mouse_down", "left_mouse_up"):
+            return "Moving the cursor"
+        if name == "left_click_drag":
+            return "Dragging"
+        if name == "scroll":
+            return f"Scrolling {action_input.get('scroll_direction', 'down')}"
+        if name == "screenshot":
+            return "Looking at the screen"
+        if name == "zoom":
+            return "Zooming in"
+        if name == "wait":
+            return "Waiting"
+        if name == "cursor_position":
+            return "Checking the cursor"
+        return name.replace("_", " ").capitalize() or "Working"
+
     def execute(self, action_input: dict, scale: ScaleResult) -> ActionResult:
         """Dispatch and execute a single computer-use action.
 
@@ -189,6 +231,9 @@ class ActionExecutor:
             An :class:`ActionResult` describing the outcome.
         """
         name = action_input.get("action", "")
+        # Surface a plain-English line on the activity HUD the instant we know the
+        # action (optimistic: shown before the cursor even moves).
+        self._emit_action(self._human_label(action_input))
 
         # Read-only actions always execute.
         if name == "screenshot":

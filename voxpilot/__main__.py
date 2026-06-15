@@ -477,11 +477,17 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) ->
     overlay = Overlay()
     tray = TrayIcon(on_quit=overlay.stop)
 
-    # Screen-edge "Under Control" aurora glow + cursor/click/typing indicators.
+    # Screen-edge "Under Control" aurora glow + cursor/click/typing indicators +
+    # the activity HUD ("what it's doing" card).
     edge = EdgeGlow() if cfg.feedback.edge_glow else None
-    if edge is not None and cfg.feedback.cursor_indicators:
-        executor.on_click = edge.click_ripple
-        executor.on_type = edge.set_typing
+    if edge is not None:
+        if cfg.feedback.cursor_indicators:
+            executor.on_click = edge.click_ripple
+            executor.on_type = edge.set_typing
+        # Per-action lines on the HUD ("Clicking", "Typing ...", "Looking ...").
+        executor.on_action = edge.push_line
+
+    _TITLES = {"thinking": "Thinking…", "acting": "Working…", "listening": "Listening…"}
 
     def on_status(state: str) -> None:
         """Mirror agent status onto the tray icon, overlay, and edge glow."""
@@ -491,18 +497,24 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, loop) ->
             overlay.show_working()
             if edge is not None:
                 edge.set_state(s)
+                edge.set_title(_TITLES[s])
         elif s in ("idle", "done"):
             overlay.hide()
             if edge is not None:
                 edge.hide()
 
     feedback.status_sink = on_status
+    # Route spoken feedback (the "Heard: ..." line, narration, results) to the HUD.
+    if edge is not None:
+        feedback.message_sink = edge.push_line
 
     def on_listen_start() -> None:
         """Drive both the capsule and the edge glow into the listening state."""
         overlay.show_listening()
         if edge is not None:
+            edge.clear_lines()
             edge.set_state("listening")
+            edge.set_title(_TITLES["listening"])
 
     def on_listen_stop() -> None:
         """Bridge from listening to thinking on both surfaces."""
