@@ -94,12 +94,24 @@ Say "Virtual environment ready." Green
 
 # --- 3. Install VoxPilot + dependencies --------------------------------------
 Step "Installing VoxPilot and dependencies (this can take a few minutes)..."
-& $vpy -m pip install --upgrade pip --quiet
+$ans = Read-Host "Enable hands-free wake word 'Hey Jarvis'? (adds onnxruntime/openwakeword) [Y/n]"
+$jarvisEnabled = -not ($ans -match '^(n|no)$')
+if ($jarvisEnabled) { $target = @("-e", ".[jarvis]") } else { $target = @("-e", ".") }
+
+& $vpy -m pip install --upgrade pip
 Push-Location $root
 try {
-    & $vpy -m pip install -e ".[jarvis]"
+    & $vpy -m pip install @target
+    $code = $LASTEXITCODE
 } finally {
     Pop-Location
+}
+if ($code -ne 0) {
+    Say ""
+    Say "pip install failed (exit code $code)." Red
+    Say "Scroll up to see the error, fix it, and re-run install.ps1." Red
+    Read-Host "Press Enter to close"
+    exit 1
 }
 Say "Dependencies installed." Green
 
@@ -159,7 +171,8 @@ if (Test-Path $cfgPath) {
 # --- 6. Shortcuts -------------------------------------------------------------
 Step "Creating Start Menu + Desktop shortcuts (hands-free Jarvis mode)..."
 $shScript = Join-Path $root "scripts\install_shortcuts.ps1"
-$shArgs = @("-ExecutionPolicy", "Bypass", "-File", $shScript, "-Jarvis")
+$shArgs = @("-ExecutionPolicy", "Bypass", "-File", $shScript)
+if ($jarvisEnabled) { $shArgs += "-Jarvis" }
 if ($Startup) { $shArgs += "-Startup" }
 try {
     & powershell @shArgs
@@ -171,8 +184,12 @@ Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host "  VoxPilot is ready!" -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Green
-Say "Launch it from the Start Menu / Desktop ('VoxPilot'), then say:"
-Say '    "Hey Jarvis"  ->  give it a command.' Cyan
+if ($jarvisEnabled) {
+    Say "Launch it from the Start Menu / Desktop ('VoxPilot'), then say:"
+    Say '    "Hey Jarvis"  ->  give it a command.' Cyan
+} else {
+    Say "Launch it from the Start Menu / Desktop ('VoxPilot'), then hold F9 and speak."
+}
 Say ""
 Say "Prefer the command line? From this folder run:"
 Say "    .\.venv\Scripts\pythonw.exe -m voxpilot --windowed --jarvis --turbo" Cyan

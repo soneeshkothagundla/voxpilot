@@ -236,6 +236,10 @@ class _WinEdgeGlow:
         self._lines: deque = deque(maxlen=6)
         self._panel = None  # cached premultiplied BGRA sprite
         self._panel_dirty = True
+        # Frame-skip state: skip the full-screen recompose when nothing visible
+        # changed (cursor idle, no ripples/typing/panel change).
+        self._frame_i = 0
+        self._last_cursor: tuple[int, int] | None = None
 
     # -- public, thread-safe API ------------------------------------------- #
     def start(self) -> None:
@@ -591,11 +595,36 @@ class _WinEdgeGlow:
         has_panel = bool(self._title or self._lines)
 
         if acting or has_panel:
-            # Recompose every frame: edges (breath-baked) + cursor effects + HUD card.
+            # Recompose the full-screen buffer only when something visible changed
+            # (cursor moved, a ripple is animating, typing, or the HUD changed); a
+            # periodic tick keeps the edge breathing while everything is idle. This
+            # avoids tens of MB/s of pointless numpy work when the cursor is still.
+            self._frame_i += 1
+            cur: tuple[int, int] | None = None
+            moved = False
+            if acting:
+                pt = _POINT()
+                self._u.GetCursorPos(ctypes.byref(pt))
+                cur = (pt.x - self._vx, pt.y - self._vy)
+                moved = self._last_cursor is None or (
+                    abs(cur[0] - self._last_cursor[0]) + abs(cur[1] - self._last_cursor[1]) > 1
+                )
+            tick = self._frame_i % 4 == 0  # ~7.5 fps breathe floor when idle
+            need = (
+                moved
+                or bool(self._ripples)
+                or self._typing
+                or self._panel_dirty
+                or tick
+                or self._composed_state is not None  # state just changed -> recompose
+            )
+            if not need:
+                return
+            self._last_cursor = cur
             self._buf.fill(0)
             self._write_bands(breath)
             if acting:
-                self._render_cursor(now)
+                self._render_cursor(now, cur)
                 self._render_ripples(now)
             if has_panel:
                 self._render_panel()
@@ -679,10 +708,8 @@ class _WinEdgeGlow:
 
         return _pbgra(img)
 
-    def _render_cursor(self, now: float) -> None:
-        pt = _POINT()
-        self._u.GetCursorPos(ctypes.byref(pt))
-        cx, cy = pt.x - self._vx, pt.y - self._vy
+    def _render_cursor(self, now: float, cur: tuple[int, int]) -> None:
+        cx, cy = cur
         # Comet trail: fade older samples.
         self._trail.append((cx, cy))
         n = len(self._trail)

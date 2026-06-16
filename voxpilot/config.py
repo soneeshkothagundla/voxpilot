@@ -70,6 +70,8 @@ class AgentConfig:
     # cursor glide) for the fastest possible action execution.
     click_interval: float = 0.04
     drag_min_duration: float = 0.3
+    # Reuse a screenshot taken within this many seconds for back-to-back captures.
+    screenshot_cache_s: float = 0.3
     # --- orchestrator / router ------------------------------------------------
     # The router picks the fastest correct path per request (answer directly, run
     # a host command, or drive the GUI). Bound its planning steps and the time a
@@ -131,6 +133,9 @@ class FeedbackConfig:
     # Spoken once when the wake word fires in --jarvis mode (before it listens
     # for your command). Set to "" to disable the greeting.
     wake_greeting: str = "I'm ready to change the world with you"
+    # Max seconds to block on a synchronous spoken line (e.g. the wake greeting)
+    # before giving up, so a hung TTS backend can never freeze the agent loop.
+    tts_sync_timeout: float = 5.0
     # Comet-style screen-edge "Under Control" aurora glow while the agent is
     # engaged (windowed mode only). Click-through and excluded from screenshots.
     edge_glow: bool = True

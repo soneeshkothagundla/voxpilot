@@ -138,6 +138,7 @@ class ActionExecutor:
         move_duration: float = 0.18,
         click_interval: float = 0.04,
         drag_min_duration: float = 0.3,
+        shot_cache_s: float = 0.3,
     ) -> None:
         """Store collaborators and typing parameters."""
         self.capture = capture
@@ -147,6 +148,7 @@ class ActionExecutor:
         self.move_duration = move_duration
         self.click_interval = click_interval
         self.drag_min_duration = drag_min_duration
+        self.shot_cache_s = shot_cache_s
         self.dry_run = guard.dry_run
         #: Small cache so a redundant ``screenshot`` action within a short window
         #: reuses the previous capture instead of grabbing the screen again.
@@ -248,11 +250,13 @@ class ActionExecutor:
         description = self._describe(action_input, scale)
         decision = self._gate(action_input, description)
         if decision == "abort":
+            self.guard.log_action(action_input, executed=False, extra={"decision": "abort"})
             return ActionResult(output="Aborted; not executing.")
         if decision == "skip":
+            self.guard.log_action(action_input, executed=False, extra={"decision": "skip"})
             return ActionResult(output=f"Skipped (not confirmed): {description}")
         if decision == "dry":
-            self.guard.log_action(action_input, executed=False)
+            self.guard.log_action(action_input, executed=False, extra={"decision": "dry_run"})
             return ActionResult(output=f"[dry-run] {description}")
 
         # decision == "proceed"
@@ -293,18 +297,18 @@ class ActionExecutor:
     def _do_screenshot(self) -> ActionResult:
         """Capture a screenshot as a base64 image result.
 
-        A capture taken within the last ~0.3s is reused, so a model that requests
-        two screenshots back-to-back doesn't pay to grab and encode the screen
-        twice.
+        A capture taken within the last ``shot_cache_s`` seconds is reused, so a
+        model that requests two screenshots back-to-back doesn't pay to grab and
+        encode the screen twice.
         """
-        media = getattr(self.capture, "media_type", "image/png")
         now = time.monotonic()
-        if self._last_shot is not None and now - self._last_shot[0] < 0.3:
+        if self._last_shot is not None and now - self._last_shot[0] < self.shot_cache_s:
             _, img, scale, media = self._last_shot
             return ActionResult(
                 base64_image=img, scale=scale, media_type=media, output="screenshot"
             )
         img, scale = self.capture.capture_base64()
+        media = getattr(self.capture, "media_type", "image/png")  # read AFTER capture
         self._last_shot = (now, img, scale, media)
         return ActionResult(
             base64_image=img, scale=scale, media_type=media, output="screenshot taken"

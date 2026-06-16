@@ -343,9 +343,9 @@ too easily).
 **Non-bypassable floor:** regardless of autonomy level, **catastrophic** actions —
 money/payments, irreversible destruction (`rm -rf`, `format`, `drop table`, …),
 and typing credentials/secrets — **always** require a human "yes" and can never be
-auto-approved. The kill switch and action log are always on. (In `--windowed`
-mode there's no terminal to answer a prompt, so a catastrophic action is simply
-**refused** rather than run.)
+auto-approved. The kill switch and action log are always on. In `--windowed` mode
+the confirmation appears as a **topmost dialog** (with a spoken "say yes" fallback),
+so you can approve or deny right on screen — no terminal needed.
 
 ### Run it in a container (use your PC in parallel)
 

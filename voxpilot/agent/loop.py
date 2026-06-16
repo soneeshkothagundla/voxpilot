@@ -231,7 +231,13 @@ class AgentLoop:
         tools = [tool]
 
         # Initial user message: instruction text + a fresh screenshot.
-        img, current_scale = self.capture.capture_base64()
+        try:
+            img, current_scale = self.capture.capture_base64()
+        except Exception as exc:  # noqa: BLE001 - no screen -> cannot drive the GUI
+            msg = f"Cannot access the screen ({type(exc).__name__}); is a display connected?"
+            self.feedback.say(msg)
+            self.feedback.status("IDLE")
+            return msg
         media_type = getattr(self.capture, "media_type", "image/png")
         messages: list[dict[str, Any]] = [
             {
@@ -256,12 +262,20 @@ class AgentLoop:
                 return "Aborted."
 
             _prune_history_images(messages, self.cfg.agent.prune_history_images)
-            resp = self.client.create(
-                messages=messages,
-                system=self._system_prompt(),
-                tools=tools,
-                max_tokens=self.cfg.agent.max_tokens,
-            )
+            try:
+                resp = self.client.create(
+                    messages=messages,
+                    system=self._system_prompt(),
+                    tools=tools,
+                    max_tokens=self.cfg.agent.max_tokens,
+                )
+            except Exception as exc:  # noqa: BLE001 - end the turn cleanly, keep app alive
+                msg = (
+                    f"Model request failed ({type(exc).__name__}). "
+                    "Check your network/credentials, then try again."
+                )
+                self.feedback.say(msg)
+                return msg
 
             blocks = _iter_blocks(resp)
             assistant_params = [_block_to_param(b) for b in blocks]
@@ -298,6 +312,12 @@ class AgentLoop:
                     tu.get("input") if isinstance(tu, dict) else getattr(tu, "input", None)
                 ) or {}
                 result = self.executor.execute(tool_input, current_scale)
+                # Surface non-success outcomes so a windowed user isn't left
+                # staring at a silent no-op (refused / skipped / failed action).
+                if result.is_error:
+                    self.feedback.say(f"Action failed: {result.output}")
+                elif result.output and result.output.startswith(("Skipped", "Aborted")):
+                    self.feedback.say(result.output)
                 if result.scale is not None:
                     current_scale = result.scale
                 tool_results.append(_make_tool_result(result, tool_use_id))

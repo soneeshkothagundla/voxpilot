@@ -341,6 +341,7 @@ def main(argv: list[str] | None = None) -> int:
         move_duration=cfg.agent.cursor_move_duration,
         click_interval=cfg.agent.click_interval,
         drag_min_duration=cfg.agent.drag_min_duration,
+        shot_cache_s=cfg.agent.screenshot_cache_s,
     )
     loop = AgentLoop(client, capture, executor, guard, feedback, cfg)
     # The orchestrator picks the best path per request (answer / command / screen);
@@ -438,7 +439,11 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     guard.start_kill_switch(cfg.hotkey)
-    listener.start()
+    try:
+        listener.start()
+    except Exception as exc:  # noqa: BLE001 - degrade without crashing
+        print(f"Voice input unavailable: {exc}", file=sys.stderr)
+        feedback.say(f"Voice input unavailable: {exc}")
     feedback.status("IDLE")
     if args.jarvis:
         print(f"\nSay '{cfg.hotkey.wake_word}', then speak your command. Ctrl+C to quit.\n")
@@ -476,9 +481,10 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, router) 
     from voxpilot.stt import create_stt
     from voxpilot.ui import EdgeGlow, Overlay, TrayIcon
 
-    # There is no terminal to answer a confirmation prompt in windowed mode.
-    cfg.safety.confirm_destructive = False
-    guard.confirm_enabled = False
+    # Windowed mode has no terminal, so route confirmations to a topmost modal
+    # dialog. The catastrophic floor stays approvable; risky-reversible actions
+    # follow confirm_destructive from config.
+    guard.windowed = True
 
     overlay = Overlay()
     tray = TrayIcon(on_quit=overlay.stop)
@@ -616,7 +622,10 @@ def run_windowed(cfg, args, feedback, capture, guard, client, executor, router) 
     tray.start()
     guard.start_kill_switch(cfg.hotkey)
     threading.Thread(target=warm_up, name="voxpilot-warmup", daemon=True).start()
-    listener.start()
+    try:
+        listener.start()
+    except Exception as exc:  # noqa: BLE001 - keep the overlay/tray alive
+        feedback.say(f"Voice input unavailable: {exc}")
     quit_hotkey.start()
     if args.jarvis:
         feedback.say(f"Jarvis ready. Say {cfg.hotkey.wake_word.replace('_', ' ')}.")

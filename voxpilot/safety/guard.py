@@ -20,6 +20,7 @@ import json
 import logging
 import logging.handlers
 import re
+import sys
 import threading
 import time
 from collections import deque
@@ -56,6 +57,13 @@ _RISKY_TYPE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r":wq",
         r"\bdiskpart\b",
         r"\bfdisk\b",
+        # Windows / PowerShell
+        r"\bRemove-Item\b",
+        r"\bInvoke-WebRequest\b",
+        r"\bInvoke-Expression\b",
+        r"\biex\b",
+        r"\bClear-Content\b",
+        r"reg\s+delete",
     )
 )
 
@@ -98,6 +106,20 @@ _CATASTROPHIC_TYPE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"seed\s+phrase",
         r"\bmnemonic\b",
         r"api[_\s-]?key",
+        # Windows / PowerShell destructive + arbitrary code execution
+        r"\bRemove-Item\b",
+        r"\bClear-Disk\b",
+        r"\bClear-Content\b",
+        r"\bFormat-Volume\b",
+        r"\bInvoke-Expression\b",
+        r"\biex\b",
+        # PowerShell -EncodedCommand / -enc / any prefix, preceded by start or space
+        r"(?:^|\s)-enc\w*",
+        # piping a download straight into a shell/interpreter
+        r"\|\s*(?:iex|invoke-expression|powershell|pwsh|cmd|bash|sh)\b",
+        # credential exposure via URLs (basic-auth or secret query params)
+        r"https?://[^/@\s]+:[^/@\s]+@",
+        r"[?&](?:api[_-]?key|access[_-]?token|token|password|secret)=",
     )
 )
 
@@ -164,6 +186,9 @@ class SafetyGuard:
         #: catastrophic ones (see :meth:`is_catastrophic`).
         self.autonomy: str = getattr(safety, "autonomy", "supervised")
         self.full_auto: bool = self.autonomy == "full"
+        #: Set by windowed/desktop mode so :meth:`confirm` uses a modal dialog
+        #: (there is no terminal to read ``input()`` from).
+        self.windowed: bool = False
 
         self._abort = threading.Event()
 
@@ -298,6 +323,10 @@ class SafetyGuard:
           on-screen if recorder/STT are unavailable.
         * ``"both"`` - require an on-screen yes (spoken is best-effort).
 
+        In windowed/desktop mode there is no terminal, so a topmost modal dialog
+        (with a spoken "say yes" fallback) is used instead of ``input()`` - this
+        is what keeps the catastrophic floor approvable in the default mode.
+
         This method never raises; any error results in denial (``False``).
 
         Args:
@@ -307,6 +336,14 @@ class SafetyGuard:
             ``True`` only if the user explicitly confirmed.
         """
         try:
+            if self.windowed:
+                modal = self._confirm_modal(description)
+                if modal is not None:
+                    return modal
+                spoken = self._confirm_spoken(description)
+                if spoken is not None:
+                    return spoken
+                return False  # no working channel -> deny (safe default)
             mode = self.safety.confirmation_mode
             if mode == "spoken":
                 spoken = self._confirm_spoken(description)
@@ -348,6 +385,38 @@ class SafetyGuard:
         except Exception:  # noqa: BLE001 - signal fallback to caller
             return None
 
+    def _confirm_modal(self, description: str) -> bool | None:
+        """Show a topmost Yes/No dialog (Windows). ``None`` if unavailable.
+
+        Blocks the calling (agent) thread until the user answers, which is the
+        intended behavior for a confirmation gate. No is the default.
+        """
+        if sys.platform != "win32":
+            return None
+        try:
+            import ctypes
+
+            mb_yesno = 0x4
+            mb_iconwarning = 0x30
+            mb_defbutton2 = 0x100  # default to "No"
+            mb_topmost = 0x40000
+            mb_setforeground = 0x10000
+            id_yes = 6
+            text = (
+                "VoxPilot wants to perform a sensitive action:\n\n"
+                f"{description}\n\n"
+                "Allow this?  (No is the safe default.)"
+            )
+            res = ctypes.windll.user32.MessageBoxW(
+                0,
+                text,
+                "VoxPilot - confirm sensitive action",
+                mb_yesno | mb_iconwarning | mb_defbutton2 | mb_topmost | mb_setforeground,
+            )
+            return res == id_yes
+        except Exception:  # noqa: BLE001 - signal "no modal channel" to the caller
+            return None
+
     # ------------------------------------------------------------------ #
     # Action logging
     # ------------------------------------------------------------------ #
@@ -366,8 +435,15 @@ class SafetyGuard:
             return
         try:
             text = action_input.get("text")
-            if isinstance(text, str) and len(text) > 80:
-                text = text[:80]
+            if isinstance(text, str):
+                # Keep full text for shell commands and anything matching the
+                # catastrophic floor (forensic value); cap ordinary typed text.
+                keep_full = action_input.get("action") == "shell" or self.is_catastrophic_command(
+                    text
+                )
+                limit = 4000 if keep_full else 200
+                if len(text) > limit:
+                    text = text[:limit] + f"...(+{len(text) - limit} chars)"
             record: dict[str, Any] = {
                 "ts": time.time(),
                 "action": action_input.get("action"),

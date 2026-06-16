@@ -46,13 +46,18 @@ class OpenAIWhisperSTT(STTBackend):
         """
         clipped = np.clip(audio.reshape(-1).astype(np.float32), -1.0, 1.0)
         pcm = (clipped * 32767.0).astype(np.int16)
-        fd, path = tempfile.mkstemp(suffix=".wav", prefix="voxpilot_")
-        os.close(fd)
-        with wave.open(path, "wb") as wav:
-            wav.setnchannels(1)
-            wav.setsampwidth(2)
-            wav.setframerate(_SAMPLE_RATE)
-            wav.writeframes(pcm.tobytes())
+        try:
+            fd, path = tempfile.mkstemp(suffix=".wav", prefix="voxpilot_")
+            os.close(fd)
+            with wave.open(path, "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(_SAMPLE_RATE)
+                wav.writeframes(pcm.tobytes())
+        except OSError as exc:
+            raise RuntimeError(
+                f"Failed to write temp audio file ({exc}); check disk space/permissions."
+            ) from exc
         return path
 
     def transcribe(self, audio: np.ndarray | str) -> str:

@@ -155,3 +155,36 @@ def test_router_controls_screen_when_needed() -> None:
     assert out == "Clicked Save."
     assert screen.calls == ["click Save"]
     assert shell.calls == []
+
+
+class _RefusingShell:
+    """A shell that refuses every command (catastrophic floor)."""
+
+    def run(self, command: str) -> str:
+        """Return a refusal string like the real ShellExecutor would."""
+        return f"Refused (catastrophic or unconfirmed), not run: {command}"
+
+
+def test_router_marks_refused_command_as_error() -> None:
+    """A refused command is reported as a tool error (is_error=True)."""
+    client = _FakeClient([])  # no model calls; we test _dispatch directly
+    r = _router(client, _RefusingShell(), _FakeScreen())
+    output, is_error = r._dispatch("run_command", {"command": "rm -rf /home"})
+    assert is_error is True
+    assert output.startswith("Refused")
+
+
+def test_router_unknown_tool_is_error() -> None:
+    """An unknown tool name is reported as an error, not silently ignored."""
+    r = _router(_FakeClient([]), _FakeShell(), _FakeScreen())
+    output, is_error = r._dispatch("bogus_tool", {})
+    assert is_error is True
+    assert output.startswith("Unknown tool")
+
+
+def test_router_successful_command_is_not_error() -> None:
+    """A normal command result is not flagged as an error."""
+    r = _router(_FakeClient([]), _FakeShell(), _FakeScreen())
+    output, is_error = r._dispatch("run_command", {"command": "echo hi"})
+    assert is_error is False
+    assert "exit code: 0" in output

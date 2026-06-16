@@ -122,14 +122,16 @@ class Feedback:
             except Exception:  # noqa: BLE001
                 pass
 
-    def say_sync(self, text: str, timeout: float = 12.0) -> None:
+    def say_sync(self, text: str, timeout: float | None = None) -> None:
         """Speak and BLOCK until the utterance finishes (used for wake greetings).
 
-        Falls back to a plain print when TTS is unavailable so callers never hang.
+        Falls back to a plain print when TTS is unavailable so callers never hang,
+        and is bounded by ``tts_sync_timeout`` (plus a worker-liveness check) so a
+        hung TTS backend can never freeze the agent loop.
 
         Args:
             text: The message to speak.
-            timeout: Max seconds to wait for speech to finish before returning.
+            timeout: Max seconds to wait; defaults to ``cfg.tts_sync_timeout``.
         """
         if not text:
             return
@@ -142,6 +144,10 @@ class Feedback:
                 pass
         if not (self.cfg.tts and self._tts_ok and self._worker is not None):
             return
+        if not self._worker.is_alive():  # dead TTS worker -> don't wait forever
+            return
+        if timeout is None:
+            timeout = float(getattr(self.cfg, "tts_sync_timeout", 5.0))
         done = threading.Event()
         try:
             self._queue.put((text, done))

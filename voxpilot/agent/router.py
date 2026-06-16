@@ -149,12 +149,20 @@ class Router:
                 self.feedback.say("Task aborted.")
                 return "Aborted."
 
-            resp = self.client.create(
-                messages=messages,
-                system=system,
-                tools=tools,
-                max_tokens=self.cfg.agent.max_tokens,
-            )
+            try:
+                resp = self.client.create(
+                    messages=messages,
+                    system=system,
+                    tools=tools,
+                    max_tokens=self.cfg.agent.max_tokens,
+                )
+            except Exception as exc:  # noqa: BLE001 - end cleanly, keep the app alive
+                msg = (
+                    f"Model request failed ({type(exc).__name__}). "
+                    "Check your network/credentials, then try again."
+                )
+                self.feedback.say(msg)
+                return msg
             blocks = resp.content
             assistant = [_block_to_param(b) for b in blocks]
             messages.append({"role": "assistant", "content": assistant})
@@ -178,13 +186,13 @@ class Router:
             for tu in tool_uses:
                 if self.guard.aborted:
                     break
-                output = self._dispatch(_get(tu, "name"), _get(tu, "input") or {})
+                output, is_error = self._dispatch(_get(tu, "name"), _get(tu, "input") or {})
                 results.append(
                     {
                         "type": "tool_result",
                         "tool_use_id": _get(tu, "id"),
                         "content": [{"type": "text", "text": output}],
-                        "is_error": False,
+                        "is_error": is_error,
                     }
                 )
             messages.append({"role": "user", "content": results})
@@ -192,18 +200,25 @@ class Router:
         self.feedback.say("Reached the step limit.")
         return "Reached the step limit."
 
-    def _dispatch(self, name: str | None, tool_input: dict) -> str:
-        """Execute one orchestrator tool and return its text result. Never raises."""
+    def _dispatch(self, name: str | None, tool_input: dict) -> tuple[str, bool]:
+        """Execute one orchestrator tool. Returns ``(output, is_error)``; never raises."""
         try:
             if name == "run_command":
                 command = str(tool_input.get("command", "")).strip()
                 purpose = str(tool_input.get("purpose", "")).strip()
                 self.feedback.say(f"Running: {purpose or command}")
-                return self.shell.run(command)
+                out = self.shell.run(command)
+                refused = out.startswith(
+                    ("Refused", "Aborted", "Command timed out", "Failed to run", "No command")
+                )
+                if refused:
+                    # Tell the user (the model also sees it), e.g. a blocked command.
+                    self.feedback.say(out.splitlines()[0])
+                return out, refused
             if name == "control_screen":
                 task = str(tool_input.get("task", "")).strip()
                 self.feedback.say(f"On screen: {task}")
-                return self.screen.run(task)
-            return f"Unknown tool: {name}"
+                return self.screen.run(task), False
+            return f"Unknown tool: {name}", True
         except Exception as exc:  # noqa: BLE001 - report back, keep the loop alive
-            return f"Tool error: {exc}"
+            return f"Tool error: {exc}", True

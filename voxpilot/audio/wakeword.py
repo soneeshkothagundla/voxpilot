@@ -116,9 +116,17 @@ class WakeWordListener:
                     "with 'pip install openwakeword' (or 'pip install .[jarvis]')."
                 ) from exc
             try:
+                import concurrent.futures
+
                 from openwakeword.utils import download_models
 
-                download_models([self.wake_word])
+                # Bounded so a slow/offline first-run download can't hang startup
+                # forever (the model is cached after the first successful fetch).
+                pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                try:
+                    pool.submit(download_models, [self.wake_word]).result(timeout=30)
+                finally:
+                    pool.shutdown(wait=False)
             except Exception:  # noqa: BLE001 - models may already be present/offline
                 pass
             self._model = Model(wakeword_models=[self.wake_word], inference_framework="onnx")
@@ -145,14 +153,20 @@ class WakeWordListener:
         self._ensure_model()
         self._stop.clear()
         self._muted.clear()
-        self._stream = sd.InputStream(
-            samplerate=self.sample_rate,
-            channels=1,
-            dtype="int16",
-            blocksize=_FRAME_SAMPLES,
-            callback=self._audio_cb,
-        )
-        self._stream.start()
+        try:
+            self._stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=1,
+                dtype="int16",
+                blocksize=_FRAME_SAMPLES,
+                callback=self._audio_cb,
+            )
+            self._stream.start()
+        except Exception as exc:  # noqa: BLE001 - normalize to a clear, catchable error
+            self._stream = None
+            raise RuntimeError(
+                f"No audio input device available ({type(exc).__name__}: {exc})"
+            ) from exc
         self._worker = threading.Thread(target=self._run_worker, daemon=True)
         self._worker.start()
 

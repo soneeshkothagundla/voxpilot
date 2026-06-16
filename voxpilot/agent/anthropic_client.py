@@ -8,11 +8,14 @@ beta flag enabled.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from anthropic import Anthropic, AnthropicBedrock
 
 from ..config import Config
+
+logger = logging.getLogger(__name__)
 
 
 def build_computer_tool(
@@ -157,8 +160,13 @@ class ComputerUseClient:
                     max_tokens=max_tokens,
                     on_text=on_text,
                 )
-            except Exception:  # noqa: BLE001 - fall back to an uncached request
-                pass
+            except Exception as exc:  # noqa: BLE001 - degrade gracefully, just once
+                # Disable caching for the rest of the run so we don't pay the
+                # (doomed) cached attempt's tokens on every subsequent turn.
+                logger.warning(
+                    "prompt cache request failed (%s); disabling caching for this run", exc
+                )
+                self.caching = False
         return self._invoke(
             messages=messages,
             system=system,

@@ -92,13 +92,25 @@ class PushToTalkRecorder:
             )
 
     def start(self) -> None:
-        """Begin recording, clearing any previously captured frames."""
+        """Begin recording, clearing any previously captured frames.
+
+        Raises:
+            RuntimeError: If no audio input device can be opened (e.g. mic
+                unplugged / asleep). The caller should catch this so a device
+                error never kills the hotkey listener thread.
+        """
         with self._lock:
             self._frames = []
         self.level = 0.0
-        self._ensure_stream()
-        assert self._stream is not None
-        self._stream.start()
+        try:
+            self._ensure_stream()
+            assert self._stream is not None
+            self._stream.start()
+        except Exception as exc:  # noqa: BLE001 - normalize to a clear, catchable error
+            self.close()
+            raise RuntimeError(
+                f"No audio input device available ({type(exc).__name__}: {exc})"
+            ) from exc
         self._active = True
 
     def stop(self) -> np.ndarray:
@@ -255,6 +267,26 @@ class HotkeyController:
         """Return True if the pressed/released key is the PTT key."""
         return key == self._ptt_key
 
+    def _safe_start(self) -> bool:
+        """Start the recorder; on a device error report it and reset state.
+
+        Returns ``True`` if recording started. A failure here must never kill the
+        global hotkey listener thread.
+        """
+        try:
+            self.recorder.start()
+            return True
+        except Exception as exc:  # noqa: BLE001
+            print(f"[voxpilot] microphone unavailable: {exc}", file=sys.stderr)
+            with self._lock:
+                self._recording = False
+            try:
+                if self.on_listen_stop is not None:
+                    self.on_listen_stop()
+            except Exception:  # noqa: BLE001
+                pass
+            return False
+
     def _on_press(self, key) -> None:
         """Handle a key press according to the configured mode."""
         if not self._matches(key):
@@ -264,8 +296,8 @@ class HotkeyController:
                 toggle_on = not self._recording
                 self._recording = toggle_on
             if toggle_on:
-                self.recorder.start()
-                self._start_meter()
+                if self._safe_start():
+                    self._start_meter()
                 return
             audio = self.recorder.stop()
             self._stop_meter()
@@ -276,8 +308,8 @@ class HotkeyController:
             if self._recording:
                 return
             self._recording = True
-        self.recorder.start()
-        self._start_meter()
+        if self._safe_start():
+            self._start_meter()
 
     def _on_release(self, key) -> None:
         """Handle a key release (only meaningful for push-to-talk)."""
