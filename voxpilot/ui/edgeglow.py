@@ -313,9 +313,16 @@ class _WinEdgeGlow:
 
     # -- Win32 setup ------------------------------------------------------- #
     def _init_window(self) -> None:
-        u = ctypes.windll.user32
-        g = ctypes.windll.gdi32
-        k = ctypes.windll.kernel32
+        # Use PRIVATE WinDLL handles, NOT the cached ``ctypes.windll.*`` singletons.
+        # We set ``argtypes``/``restype`` below, and those singletons are shared
+        # process-wide with pyautogui's mouse/keyboard backend. In particular,
+        # mutating ``GetCursorPos.argtypes`` on the shared user32 makes every later
+        # pyautogui call raise "expected LP__POINT instead of pointer to POINT",
+        # which silently breaks all on-screen control in windowed mode. Private
+        # handles keep our type setup isolated to this window.
+        u = ctypes.WinDLL("user32")
+        g = ctypes.WinDLL("gdi32")
+        k = ctypes.WinDLL("kernel32")
         self._u, self._g = u, g
         lresult = ctypes.c_longlong
 

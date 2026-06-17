@@ -169,9 +169,13 @@ class _WinOverlay:
     def _init_window(self) -> None:
         from ._aurora import AuroraRenderer
 
-        u = ctypes.windll.user32
-        g = ctypes.windll.gdi32
-        k = ctypes.windll.kernel32
+        # Private WinDLL handles, NOT the cached ``ctypes.windll.*`` singletons: we
+        # mutate ``argtypes``/``restype`` below, and those singletons are shared
+        # process-wide with pyautogui's input backend. Isolating our setup to
+        # private handles prevents corrupting pyautogui's calls (see edgeglow.py).
+        u = ctypes.WinDLL("user32")
+        g = ctypes.WinDLL("gdi32")
+        k = ctypes.WinDLL("kernel32")
         self._u, self._g = u, g
         lresult = ctypes.c_longlong
 

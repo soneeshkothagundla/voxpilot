@@ -62,9 +62,10 @@ stt:
   # "openai" (requires OPENAI_API_KEY and stt.openai opt-in below).
   backend: faster_whisper
 
-  # faster-whisper model size: tiny | base | small | medium | large-v3
-  # Smaller = faster + less accurate. "base" is a good default.
-  model: base
+  # faster-whisper model size: tiny | base | small | small.en | medium | large-v3
+  # Smaller = faster + less accurate. "small.en" is the recommended default for
+  # English (far fewer mis-hears than "base"); use "base" on slow machines.
+  model: small.en
 
   # Compute device: auto | cpu | cuda
   device: auto

@@ -78,6 +78,13 @@ class AgentConfig:
     # single host command may run before it is killed.
     router_max_steps: int = 12
     command_timeout: float = 60.0
+    # --- transient-error retries ----------------------------------------------
+    # Retry transient model failures (HTTP 429 throttling, connection blips, 5xx)
+    # with exponential backoff + jitter, honoring Retry-After when present. This
+    # stops a brief rate limit from aborting a request mid-task.
+    request_max_retries: int = 5
+    retry_base_delay: float = 1.0
+    retry_max_delay: float = 30.0
 
 
 @dataclass
@@ -85,7 +92,9 @@ class STTConfig:
     """Speech-to-text backend settings."""
 
     backend: str = "faster_whisper"
-    model: str = "base"
+    # "small.en" is markedly more accurate than "base" for English speech (fewer
+    # mis-hears that send garbled commands to the agent) at a modest speed cost.
+    model: str = "small.en"
     device: str = "auto"
     compute_type: str = "auto"
     language: str | None = None

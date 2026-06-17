@@ -8,8 +8,14 @@ lifecycle, and the no-op backend used off-Windows.
 
 from __future__ import annotations
 
-import numpy as np
+import inspect
+import sys
 
+import numpy as np
+import pytest
+
+import voxpilot.ui.edgeglow as edgeglow_mod
+import voxpilot.ui.overlay as overlay_mod
 from voxpilot.ui.edgeglow import (
     _falloff_mask,
     _fit_text,
@@ -90,6 +96,55 @@ def test_noop_edgeglow_is_safe() -> None:
     g.clear_lines()
     g.hide()
     g.stop()
+
+
+def test_init_window_uses_private_windll_handles() -> None:
+    """Regression: the Win32 windows must NOT mutate the shared ``windll`` singletons.
+
+    edgeglow/overlay set ``argtypes`` on user32 functions (notably
+    ``GetCursorPos``). ``ctypes.windll.user32`` is a process-wide cached singleton
+    shared with pyautogui's input backend, so mutating its argtypes there makes
+    every later ``pyautogui`` mouse call raise
+    "expected LP__POINT instead of pointer to POINT" and silently breaks all
+    on-screen control in windowed mode. The fix is to use private
+    ``ctypes.WinDLL(...)`` handles. Guard that here at the source level so it
+    runs on every platform.
+    """
+    for mod in (edgeglow_mod, overlay_mod):
+        src = inspect.getsource(mod._WinEdgeGlow._init_window) if mod is edgeglow_mod else None
+        if src is None:
+            # overlay's window class name differs; grab its _init_window source.
+            cls = next(
+                obj
+                for _name, obj in vars(mod).items()
+                if isinstance(obj, type) and hasattr(obj, "_init_window")
+            )
+            src = inspect.getsource(cls._init_window)
+        assert 'ctypes.WinDLL("user32")' in src, f"{mod.__name__} must use a private user32 handle"
+        # The shared singleton must not be the handle we mutate argtypes on.
+        assert "ctypes.windll.user32" not in src, (
+            f"{mod.__name__}._init_window must not touch the shared windll.user32 singleton"
+        )
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows-only ctypes behavior")
+def test_private_windll_does_not_pollute_shared_singleton() -> None:
+    """The property the fix relies on: a private WinDLL's argtypes stay isolated."""
+    import ctypes
+
+    class _PT(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+    shared_before = ctypes.windll.user32.GetCursorPos.argtypes
+    private = ctypes.WinDLL("user32")
+    private.GetCursorPos.argtypes = [ctypes.POINTER(_PT)]
+    # Mutating the private handle leaves the shared singleton untouched.
+    assert ctypes.windll.user32.GetCursorPos.argtypes == shared_before
+    # And pyautogui (which uses the shared singleton) still works.
+    import pyautogui
+
+    pos = pyautogui.position()
+    assert pos is not None
 
 
 def test_fit_text_truncates_to_width() -> None:
